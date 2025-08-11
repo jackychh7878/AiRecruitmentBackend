@@ -179,7 +179,57 @@ curl -X POST \
 }
 ```
 
-### 2. Get Parser Information
+### 2. Create Candidate from Parsed Data
+
+**POST** `/candidates/create-from-parsed-data`
+
+Create a complete candidate profile directly from parsed resume data.
+
+#### Request
+- **Content-Type**: `application/json`
+- **Body**: JSON object with candidate data (same format as resume parser output)
+
+#### Example using curl:
+```bash
+curl -X POST \
+  http://localhost:5000/candidates/create-from-parsed-data \
+  -H "Content-Type: application/json" \
+  -d @example_parsed_resume_data.json
+```
+
+#### Response Format:
+```json
+{
+  "success": true,
+  "message": "Candidate profile created successfully with 26 total records. Success rate: 100.0%",
+  "candidate": {
+    "id": 123,
+    "first_name": "John",
+    "last_name": "Doe",
+    // ... complete candidate data with all relationships
+    "career_history": [...],
+    "skills": [...],
+    "education": [...],
+    "languages": [...],
+    "licenses_certifications": [...]
+  },
+  "creation_stats": {
+    "candidate_id": 123,
+    "records_created": {
+      "career_history": 3,
+      "skills": 10,
+      "education": 2,
+      "licenses_certifications": 2,
+      "languages": 3,
+      "resumes": 0
+    },
+    "validation_errors": [],
+    "success_rate": 100.0
+  }
+}
+```
+
+### 3. Get Parser Information
 
 **GET** `/candidates/parse-resume/supported-formats`
 
@@ -235,6 +285,70 @@ const prefillCandidateForm = (candidateData) => {
   setEducation(candidateData.education || []);
   setLanguages(candidateData.languages || []);
   setCertifications(candidateData.licenses_certifications || []);
+};
+```
+
+### Direct Creation Example
+
+```javascript
+const createCandidateFromParsedData = async (parsedData) => {
+  try {
+    const response = await fetch('/candidates/create-from-parsed-data', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(parsedData.candidate_data)
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log(`Created candidate ID: ${result.candidate.id}`);
+      console.log(`Success rate: ${result.creation_stats.success_rate}%`);
+      
+      // Redirect to candidate profile or show success message
+      window.location.href = `/candidates/${result.candidate.id}`;
+    } else {
+      console.error('Creation failed:', result.message);
+    }
+  } catch (error) {
+    console.error('Request failed:', error);
+  }
+};
+```
+
+### Complete Workflow Example
+
+```javascript
+// Step 1: Parse resume
+const handleResumeUpload = async (file) => {
+  const formData = new FormData();
+  formData.append('resume_file', file);
+  
+  try {
+    // Parse the resume
+    const parseResponse = await fetch('/candidates/parse-resume', {
+      method: 'POST',
+      body: formData
+    });
+    
+    const parseResult = await parseResponse.json();
+    
+    if (parseResult.success) {
+      // Option A: Prefill form for user review
+      if (userWantsToReview) {
+        prefillCandidateForm(parseResult.candidate_data);
+        showReviewForm();
+      }
+      // Option B: Create candidate directly
+      else {
+        await createCandidateFromParsedData(parseResult);
+      }
+    }
+  } catch (error) {
+    console.error('Resume processing failed:', error);
+  }
 };
 ```
 

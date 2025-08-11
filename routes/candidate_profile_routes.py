@@ -1,7 +1,11 @@
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from database import db
-from models import CandidateMasterProfile
+from models import (
+    CandidateMasterProfile, CandidateCareerHistory, CandidateSkills,
+    CandidateEducation, CandidateLicensesCertifications, CandidateLanguages,
+    CandidateResume
+)
 from datetime import datetime
 import json
 from werkzeug.datastructures import FileStorage
@@ -128,6 +132,37 @@ resume_parse_response_model = candidate_profile_ns.model('ResumeParseResponse', 
     'message': fields.String(description='Status message'),
     'candidate_data': fields.Nested(candidate_model, description='Parsed candidate information'),
     'parsing_stats': fields.Raw(description='Statistics about the parsing process')
+})
+
+# Bulk candidate creation model (matches the output from resume parser)
+candidate_bulk_create_model = candidate_profile_ns.model('CandidateBulkCreate', {
+    'first_name': fields.String(required=True, description='First name'),
+    'last_name': fields.String(required=True, description='Last name'),
+    'email': fields.String(required=True, description='Email address'),
+    'location': fields.String(description='Location'),
+    'phone_number': fields.String(description='Phone number'),
+    'personal_summary': fields.String(description='Personal summary'),
+    'availability_weeks': fields.Integer(description='Availability in weeks'),
+    'preferred_work_types': fields.String(description='Preferred work types'),
+    'right_to_work': fields.Boolean(description='Right to work'),
+    'salary_expectation': fields.Float(description='Salary expectation'),
+    'classification_of_interest': fields.String(description='Classification of interest'),
+    'sub_classification_of_interest': fields.String(description='Sub-classification of interest'),
+    'is_active': fields.Boolean(description='Is active', default=True),
+    # Relationship data
+    'career_history': fields.List(fields.Nested(career_history_model), description='Career history records'),
+    'skills': fields.List(fields.Nested(skills_model), description='Skills records'),
+    'education': fields.List(fields.Nested(education_model), description='Education records'),
+    'licenses_certifications': fields.List(fields.Nested(licenses_certifications_model), description='Licenses and certifications'),
+    'languages': fields.List(fields.Nested(languages_model), description='Languages'),
+    'resumes': fields.List(fields.Nested(resumes_model), description='Resume files')
+})
+
+candidate_bulk_create_response_model = candidate_profile_ns.model('CandidateBulkCreateResponse', {
+    'success': fields.Boolean(description='Whether creation was successful'),
+    'message': fields.String(description='Status message'),
+    'candidate': fields.Nested(candidate_model, description='Created candidate with all relationships'),
+    'creation_stats': fields.Raw(description='Statistics about the creation process')
 })
 
 candidate_input_model = candidate_profile_ns.model('CandidateInput', {
@@ -555,4 +590,275 @@ class CandidateResumeParserInfo(Resource):
             }, 200
             
         except Exception as e:
-            candidate_profile_ns.abort(500, str(e)) 
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/create-from-parsed-data')
+class CandidateBulkCreate(Resource):
+    @candidate_profile_ns.doc('create_candidate_from_parsed_data')
+    @candidate_profile_ns.expect(candidate_bulk_create_model)
+    def post(self):
+        """
+        Create a complete candidate profile from parsed resume data
+        
+        This endpoint accepts the JSON output from the resume parser and creates
+        a complete candidate profile including all related records (career history,
+        skills, education, languages, certifications).
+        
+        Perfect for creating candidates directly from parsed resume data.
+        """
+        try:
+            data = request.get_json()
+            
+            if not data:
+                candidate_profile_ns.abort(400, 'No data provided')
+            
+            # Validate required fields
+            required_fields = ['first_name', 'last_name', 'email']
+            for field in required_fields:
+                if field not in data or not data[field]:
+                    candidate_profile_ns.abort(400, f'{field} is required')
+            
+            # Check if email already exists
+            existing_candidate = CandidateMasterProfile.query.filter_by(email=data['email']).first()
+            if existing_candidate:
+                candidate_profile_ns.abort(400, f'Email {data["email"]} already exists')
+            
+            # Start database transaction
+            try:
+                # Create the main candidate profile
+                candidate = CandidateMasterProfile(
+                    first_name=data['first_name'],
+                    last_name=data['last_name'],
+                    email=data['email'],
+                    location=data.get('location'),
+                    phone_number=data.get('phone_number'),
+                    personal_summary=data.get('personal_summary'),
+                    availability_weeks=data.get('availability_weeks'),
+                    preferred_work_types=data.get('preferred_work_types'),
+                    right_to_work=data.get('right_to_work', False),
+                    salary_expectation=data.get('salary_expectation'),
+                    classification_of_interest=data.get('classification_of_interest'),
+                    sub_classification_of_interest=data.get('sub_classification_of_interest'),
+                    is_active=data.get('is_active', True)
+                )
+                
+                db.session.add(candidate)
+                db.session.flush()  # Get the candidate ID without committing
+                
+                # Track creation statistics
+                creation_stats = {
+                    'candidate_id': candidate.id,
+                    'records_created': {
+                        'career_history': 0,
+                        'skills': 0,
+                        'education': 0,
+                        'licenses_certifications': 0,
+                        'languages': 0,
+                        'resumes': 0
+                    },
+                    'validation_errors': []
+                }
+                
+                # Create career history records
+                if data.get('career_history'):
+                    for ch_data in data['career_history']:
+                        try:
+                            # Parse dates if provided
+                            start_date = None
+                            end_date = None
+                            
+                            if ch_data.get('start_date'):
+                                if isinstance(ch_data['start_date'], str):
+                                    try:
+                                        start_date = datetime.strptime(ch_data['start_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid start_date format: {ch_data['start_date']}")
+                                else:
+                                    start_date = ch_data['start_date']
+                            
+                            if ch_data.get('end_date'):
+                                if isinstance(ch_data['end_date'], str):
+                                    try:
+                                        end_date = datetime.strptime(ch_data['end_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid end_date format: {ch_data['end_date']}")
+                                else:
+                                    end_date = ch_data['end_date']
+                            
+                            if ch_data.get('job_title') and ch_data.get('company_name'):
+                                career_history = CandidateCareerHistory(
+                                    candidate_id=candidate.id,
+                                    job_title=ch_data['job_title'],
+                                    company_name=ch_data['company_name'],
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    description=ch_data.get('description')
+                                )
+                                db.session.add(career_history)
+                                creation_stats['records_created']['career_history'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Career history error: {str(e)}")
+                
+                # Create skills records
+                if data.get('skills'):
+                    for skill_data in data['skills']:
+                        try:
+                            if skill_data.get('skills'):
+                                skill = CandidateSkills(
+                                    candidate_id=candidate.id,
+                                    career_history_id=skill_data.get('career_history_id'),
+                                    skills=skill_data['skills']
+                                )
+                                db.session.add(skill)
+                                creation_stats['records_created']['skills'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Skill error: {str(e)}")
+                
+                # Create education records
+                if data.get('education'):
+                    for edu_data in data['education']:
+                        try:
+                            # Parse dates if provided
+                            start_date = None
+                            end_date = None
+                            
+                            if edu_data.get('start_date'):
+                                if isinstance(edu_data['start_date'], str):
+                                    try:
+                                        start_date = datetime.strptime(edu_data['start_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        # Try year-only format
+                                        try:
+                                            start_date = datetime.strptime(edu_data['start_date'], '%Y').date()
+                                        except ValueError:
+                                            creation_stats['validation_errors'].append(f"Invalid education start_date: {edu_data['start_date']}")
+                            
+                            if edu_data.get('end_date'):
+                                if isinstance(edu_data['end_date'], str):
+                                    try:
+                                        end_date = datetime.strptime(edu_data['end_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        # Try year-only format
+                                        try:
+                                            end_date = datetime.strptime(edu_data['end_date'], '%Y').date()
+                                        except ValueError:
+                                            creation_stats['validation_errors'].append(f"Invalid education end_date: {edu_data['end_date']}")
+                            
+                            if edu_data.get('school'):
+                                education = CandidateEducation(
+                                    candidate_id=candidate.id,
+                                    school=edu_data['school'],
+                                    degree=edu_data.get('degree'),
+                                    field_of_study=edu_data.get('field_of_study'),
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    grade=edu_data.get('grade'),
+                                    description=edu_data.get('description')
+                                )
+                                db.session.add(education)
+                                creation_stats['records_created']['education'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Education error: {str(e)}")
+                
+                # Create licenses & certifications records
+                if data.get('licenses_certifications'):
+                    for cert_data in data['licenses_certifications']:
+                        try:
+                            # Parse dates if provided
+                            issue_date = None
+                            expiration_date = None
+                            
+                            if cert_data.get('issue_date'):
+                                if isinstance(cert_data['issue_date'], str):
+                                    try:
+                                        issue_date = datetime.strptime(cert_data['issue_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid cert issue_date: {cert_data['issue_date']}")
+                            
+                            if cert_data.get('expiration_date'):
+                                if isinstance(cert_data['expiration_date'], str):
+                                    try:
+                                        expiration_date = datetime.strptime(cert_data['expiration_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid cert expiration_date: {cert_data['expiration_date']}")
+                            
+                            if cert_data.get('name'):
+                                certification = CandidateLicensesCertifications(
+                                    candidate_id=candidate.id,
+                                    name=cert_data['name'],
+                                    issuing_organization=cert_data.get('issuing_organization'),
+                                    issue_date=issue_date,
+                                    expiration_date=expiration_date,
+                                    credential_id=cert_data.get('credential_id'),
+                                    credential_url=cert_data.get('credential_url')
+                                )
+                                db.session.add(certification)
+                                creation_stats['records_created']['licenses_certifications'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Certification error: {str(e)}")
+                
+                # Create languages records
+                if data.get('languages'):
+                    for lang_data in data['languages']:
+                        try:
+                            if lang_data.get('language'):
+                                language = CandidateLanguages(
+                                    candidate_id=candidate.id,
+                                    language=lang_data['language'],
+                                    proficiency_level=lang_data.get('proficiency_level')
+                                )
+                                db.session.add(language)
+                                creation_stats['records_created']['languages'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Language error: {str(e)}")
+                
+                # Create resume records (if any)
+                if data.get('resumes'):
+                    for resume_data in data['resumes']:
+                        try:
+                            if resume_data.get('azure_blob_url'):
+                                resume = CandidateResume(
+                                    candidate_id=candidate.id,
+                                    azure_blob_url=resume_data['azure_blob_url'],
+                                    file_name=resume_data.get('file_name'),
+                                    file_size=resume_data.get('file_size')
+                                )
+                                db.session.add(resume)
+                                creation_stats['records_created']['resumes'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Resume error: {str(e)}")
+                
+                # Commit all changes
+                db.session.commit()
+                
+                # Calculate success metrics
+                total_records_created = sum(creation_stats['records_created'].values()) + 1  # +1 for candidate
+                total_input_records = (
+                    len(data.get('career_history', [])) +
+                    len(data.get('skills', [])) +
+                    len(data.get('education', [])) +
+                    len(data.get('licenses_certifications', [])) +
+                    len(data.get('languages', [])) +
+                    len(data.get('resumes', []))
+                )
+                
+                creation_stats['success_rate'] = round(
+                    (total_records_created - len(creation_stats['validation_errors'])) / max(total_records_created, 1) * 100, 2
+                ) if total_records_created > 0 else 100
+                
+                # Get the complete candidate data with relationships
+                candidate_with_relationships = candidate.to_dict(include_relationships=True)
+                
+                return {
+                    'success': True,
+                    'message': f'Candidate profile created successfully with {total_records_created} total records. Success rate: {creation_stats["success_rate"]}%',
+                    'candidate': candidate_with_relationships,
+                    'creation_stats': creation_stats
+                }, 201
+                
+            except Exception as e:
+                db.session.rollback()
+                candidate_profile_ns.abort(500, f'Failed to create candidate profile: {str(e)}')
+                
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'An unexpected error occurred: {str(e)}') 

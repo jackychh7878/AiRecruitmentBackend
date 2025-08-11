@@ -1,0 +1,133 @@
+{
+  "first_name": "John",
+  "last_name": "Doe",
+  "email": "john.doe@example.com",
+  "phone_number": "5551234567",
+  "location": "San Francisco, CA",
+  "personal_summary": "Experienced software engineer with 5+ years of experience in full-stack development. Proven track record of delivering high-quality applications using modern technologies and agile methodologies.",
+  "availability_weeks": 2,
+  "preferred_work_types": "Full-time, Contract",
+  "right_to_work": true,
+  "salary_expectation": 120000.00,
+  "classification_of_interest": "Information Technology",
+  "sub_classification_of_interest": "Software Development",
+  "is_active": true,
+  "career_history": [
+    {
+      "job_title": "Senior Software Engineer",
+      "company_name": "Tech Solutions Inc",
+      "start_date": "2021-03-01",
+      "end_date": null,
+      "description": "Lead development of web applications using React and Node.js. Managed a team of 3 junior developers."
+    },
+    {
+      "job_title": "Software Engineer",
+      "company_name": "StartupXYZ",
+      "start_date": "2019-06-15",
+      "end_date": "2021-02-28",
+      "description": "Developed mobile applications using React Native and backend APIs using Python Flask."
+    },
+    {
+      "job_title": "Junior Developer",
+      "company_name": "WebDev Co",
+      "start_date": "2018-01-10",
+      "end_date": "2019-06-01",
+      "description": "Built responsive websites using HTML, CSS, and JavaScript. Gained experience in database design and management."
+    }
+  ],
+  "skills": [
+    {
+      "skills": "Python",
+      "career_history_id": null
+    },
+    {
+      "skills": "React",
+      "career_history_id": null
+    },
+    {
+      "skills": "Node.js",
+      "career_history_id": null
+    },
+    {
+      "skills": "JavaScript",
+      "career_history_id": null
+    },
+    {
+      "skills": "HTML",
+      "career_history_id": null
+    },
+    {
+      "skills": "CSS",
+      "career_history_id": null
+    },
+    {
+      "skills": "SQL",
+      "career_history_id": null
+    },
+    {
+      "skills": "Docker",
+      "career_history_id": null
+    },
+    {
+      "skills": "AWS",
+      "career_history_id": null
+    },
+    {
+      "skills": "Git",
+      "career_history_id": null
+    }
+  ],
+  "education": [
+    {
+      "school": "University of California, Berkeley",
+      "degree": "Bachelor of Science in Computer Science",
+      "field_of_study": "Computer Science",
+      "start_date": "2014-09-01",
+      "end_date": "2018-05-15",
+      "grade": "3.7 GPA",
+      "description": "Relevant coursework: Data Structures, Algorithms, Software Engineering, Database Systems"
+    },
+    {
+      "school": "San Francisco Community College",
+      "degree": "Associate of Arts",
+      "field_of_study": "Mathematics",
+      "start_date": "2012-09-01",
+      "end_date": "2014-06-01",
+      "grade": "3.9 GPA",
+      "description": "Mathematics foundation courses"
+    }
+  ],
+  "licenses_certifications": [
+    {
+      "name": "AWS Certified Solutions Architect",
+      "issuing_organization": "Amazon Web Services",
+      "issue_date": "2022-08-15",
+      "expiration_date": "2025-08-15",
+      "credential_id": "AWS-CSA-123456",
+      "credential_url": "https://aws.amazon.com/verification/AWS-CSA-123456"
+    },
+    {
+      "name": "Certified Scrum Master",
+      "issuing_organization": "Scrum Alliance",
+      "issue_date": "2021-10-20",
+      "expiration_date": "2023-10-20",
+      "credential_id": "CSM-789012",
+      "credential_url": null
+    }
+  ],
+  "languages": [
+    {
+      "language": "English",
+      "proficiency_level": "Native"
+    },
+    {
+      "language": "Spanish",
+      "proficiency_level": "Intermediate"
+    },
+    {
+      "language": "Mandarin",
+      "proficiency_level": "Beginner"
+    }
+  ],
+  "resumes": []
+} 
