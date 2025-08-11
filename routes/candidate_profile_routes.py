@@ -4,6 +4,8 @@ from database import db
 from models import CandidateMasterProfile
 from datetime import datetime
 import json
+from werkzeug.datastructures import FileStorage
+from services.resume_parser import resume_parser
 
 # Create namespace
 candidate_profile_ns = Namespace('candidates', description='Candidate profile operations')
@@ -111,6 +113,21 @@ candidate_model = candidate_profile_ns.model('Candidate', {
     'licenses_certifications': fields.List(fields.Nested(licenses_certifications_model), description='Licenses and certifications'),
     'languages': fields.List(fields.Nested(languages_model), description='Languages'),
     'resumes': fields.List(fields.Nested(resumes_model), description='Resumes')
+})
+
+# Resume upload model for Swagger documentation
+resume_upload_parser = candidate_profile_ns.parser()
+resume_upload_parser.add_argument('resume_file', 
+                                 location='files',
+                                 type=FileStorage,
+                                 required=True,
+                                 help='PDF resume file to parse')
+
+resume_parse_response_model = candidate_profile_ns.model('ResumeParseResponse', {
+    'success': fields.Boolean(description='Whether parsing was successful'),
+    'message': fields.String(description='Status message'),
+    'candidate_data': fields.Nested(candidate_model, description='Parsed candidate information'),
+    'parsing_stats': fields.Raw(description='Statistics about the parsing process')
 })
 
 candidate_input_model = candidate_profile_ns.model('CandidateInput', {
@@ -397,6 +414,143 @@ class CandidateStats(Resource):
                 'classification_breakdown': [
                     {'classification': stat[0], 'count': stat[1]} 
                     for stat in classification_stats if stat[0]
+                ]
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/parse-resume')
+class CandidateResumeParser(Resource):
+    @candidate_profile_ns.doc('parse_resume_pdf')
+    @candidate_profile_ns.expect(resume_upload_parser)
+    def post(self):
+        """
+        Parse PDF resume and extract candidate information using NER
+        
+        This endpoint uses Named Entity Recognition (NER) and PDF text extraction 
+        to automatically extract candidate profile information from uploaded resume PDFs.
+        
+        Based on methodology from: https://medium.com/pythons-gurus/performing-resum%C3%A9-analysis-using-ner-with-cosine-similarity-8eb99879cda4
+        
+        Returns structured candidate data that can be used to prefill 
+        candidate creation forms in the frontend.
+        """
+        try:
+            # Validate file upload
+            if 'resume_file' not in request.files:
+                candidate_profile_ns.abort(400, 'No resume file provided')
+                
+            file = request.files['resume_file']
+            
+            if file.filename == '':
+                candidate_profile_ns.abort(400, 'No file selected')
+                
+            # Validate file type
+            if not file.filename.lower().endswith('.pdf'):
+                candidate_profile_ns.abort(400, 'Only PDF files are supported')
+                
+            # Validate file size (max 10MB)
+            file.seek(0, 2)  # Seek to end
+            file_size = file.tell()
+            file.seek(0)  # Reset to beginning
+            
+            if file_size > 10 * 1024 * 1024:  # 10MB limit
+                candidate_profile_ns.abort(400, 'File size must be less than 10MB')
+                
+            if file_size == 0:
+                candidate_profile_ns.abort(400, 'File is empty')
+            
+            # Parse the resume using NER service
+            try:
+                parsed_data = resume_parser.parse_resume(file)
+                
+                # Calculate parsing statistics
+                parsing_stats = {
+                    'file_size_bytes': file_size,
+                    'file_name': file.filename,
+                    'entities_extracted': {
+                        'career_history_count': len(parsed_data.get('career_history', [])),
+                        'skills_count': len(parsed_data.get('skills', [])),
+                        'education_count': len(parsed_data.get('education', [])),
+                        'languages_count': len(parsed_data.get('languages', [])),
+                        'certifications_count': len(parsed_data.get('licenses_certifications', []))
+                    },
+                    'contact_info_found': {
+                        'email': bool(parsed_data.get('email')),
+                        'phone': bool(parsed_data.get('phone_number')),
+                        'location': bool(parsed_data.get('location'))
+                    },
+                    'name_extracted': {
+                        'first_name': bool(parsed_data.get('first_name')),
+                        'last_name': bool(parsed_data.get('last_name'))
+                    }
+                }
+                
+                # Calculate completeness score
+                completeness_factors = [
+                    bool(parsed_data.get('first_name')),
+                    bool(parsed_data.get('last_name')),
+                    bool(parsed_data.get('email')),
+                    bool(parsed_data.get('phone_number')),
+                    bool(parsed_data.get('location')),
+                    len(parsed_data.get('career_history', [])) > 0,
+                    len(parsed_data.get('skills', [])) > 0,
+                    len(parsed_data.get('education', [])) > 0
+                ]
+                
+                completeness_score = sum(completeness_factors) / len(completeness_factors) * 100
+                parsing_stats['completeness_score'] = round(completeness_score, 1)
+                
+                # Prepare response
+                response_data = {
+                    'success': True,
+                    'message': f'Resume parsed successfully. Extracted {sum(parsing_stats["entities_extracted"].values())} entities with {parsing_stats["completeness_score"]}% completeness.',
+                    'candidate_data': parsed_data,
+                    'parsing_stats': parsing_stats
+                }
+                
+                return response_data, 200
+                
+            except ValueError as ve:
+                candidate_profile_ns.abort(422, f'Resume parsing failed: {str(ve)}')
+                
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'An unexpected error occurred: {str(e)}')
+
+@candidate_profile_ns.route('/parse-resume/supported-formats')
+class CandidateResumeParserInfo(Resource):
+    @candidate_profile_ns.doc('get_resume_parser_info')
+    def get(self):
+        """Get information about supported resume formats and parsing capabilities"""
+        try:
+            return {
+                'supported_formats': ['PDF'],
+                'max_file_size_mb': 10,
+                'extractable_information': {
+                    'personal_info': [
+                        'First name', 'Last name', 'Email', 'Phone number', 'Location'
+                    ],
+                    'professional_info': [
+                        'Work experience', 'Job titles', 'Company names', 'Skills'
+                    ],
+                    'education_info': [
+                        'Schools/Universities', 'Degrees', 'Graduation years'
+                    ],
+                    'additional_info': [
+                        'Languages', 'Certifications', 'Licenses'
+                    ]
+                },
+                'parsing_technology': {
+                    'method': 'Named Entity Recognition (NER)',
+                    'library': 'spaCy with custom entity ruler',
+                    'reference': 'https://medium.com/pythons-gurus/performing-resum%C3%A9-analysis-using-ner-with-cosine-similarity-8eb99879cda4'
+                },
+                'usage_tips': [
+                    'Ensure PDF contains selectable text (not scanned images)',
+                    'Use standard resume formats for better parsing accuracy',
+                    'Include clear section headers (Education, Experience, Skills, etc.)',
+                    'Avoid complex layouts or graphics that may interfere with text extraction'
                 ]
             }, 200
             
