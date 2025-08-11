@@ -80,9 +80,9 @@ languages_model = candidate_profile_ns.model('Languages', {
 resumes_model = candidate_profile_ns.model('Resumes', {
     'id': fields.Integer(readonly=True, description='Resume ID'),
     'candidate_id': fields.Integer(description='Candidate ID'),
-    'azure_blob_url': fields.String(description='Azure blob URL'),
     'file_name': fields.String(description='File name'),
     'file_size': fields.Integer(description='File size'),
+    'content_type': fields.String(description='MIME type of the file'),
     'upload_date': fields.DateTime(description='Upload date'),
     'is_active': fields.Boolean(description='Is active'),
     'created_date': fields.DateTime(readonly=True, description='Creation date'),
@@ -155,7 +155,8 @@ candidate_bulk_create_model = candidate_profile_ns.model('CandidateBulkCreate', 
     'education': fields.List(fields.Nested(education_model), description='Education records'),
     'licenses_certifications': fields.List(fields.Nested(licenses_certifications_model), description='Licenses and certifications'),
     'languages': fields.List(fields.Nested(languages_model), description='Languages'),
-    'resumes': fields.List(fields.Nested(resumes_model), description='Resume files')
+    'resumes': fields.List(fields.Nested(resumes_model), description='Resume files'),
+    'resume_file': fields.Raw(description='PDF file data (base64 encoded) for direct upload')
 })
 
 candidate_bulk_create_response_model = candidate_profile_ns.model('CandidateBulkCreateResponse', {
@@ -553,6 +554,302 @@ class CandidateResumeParser(Resource):
         except Exception as e:
             candidate_profile_ns.abort(500, f'An unexpected error occurred: {str(e)}')
 
+# Add multipart parser for PDF upload with JSON data
+create_with_pdf_parser = candidate_profile_ns.parser()
+create_with_pdf_parser.add_argument('pdf_file', 
+                                   location='files',
+                                   type=FileStorage,
+                                   required=True,
+                                   help='PDF resume file')
+create_with_pdf_parser.add_argument('candidate_data',
+                                   location='form',
+                                   type=str,
+                                   required=True,
+                                   help='JSON string containing candidate data')
+
+@candidate_profile_ns.route('/create-with-pdf')
+class CandidateCreateWithPDF(Resource):
+    @candidate_profile_ns.doc('create_candidate_with_pdf')
+    @candidate_profile_ns.expect(create_with_pdf_parser)
+    def post(self):
+        """
+        Create a complete candidate profile from parsed resume data + PDF file
+        
+        This endpoint accepts both:
+        1. A PDF file (multipart/form-data)
+        2. JSON candidate data (form field)
+        
+        Perfect for creating candidates when you have both the parsed data and the original PDF file.
+        """
+        try:
+            args = create_with_pdf_parser.parse_args()
+            pdf_file = args['pdf_file']
+            candidate_data_json = args['candidate_data']
+            
+            # Validate PDF file
+            if not pdf_file or pdf_file.filename == '':
+                candidate_profile_ns.abort(400, 'No PDF file provided')
+            
+            if not pdf_file.filename.lower().endswith('.pdf'):
+                candidate_profile_ns.abort(400, 'Only PDF files are allowed')
+            
+            # Parse candidate data JSON
+            try:
+                import json
+                data = json.loads(candidate_data_json)
+            except json.JSONDecodeError as e:
+                candidate_profile_ns.abort(400, f'Invalid JSON in candidate_data: {str(e)}')
+            
+            if not data:
+                candidate_profile_ns.abort(400, 'No candidate data provided')
+            
+            # Validate required fields
+            required_fields = ['first_name', 'last_name', 'email']
+            for field in required_fields:
+                if field not in data or not data[field]:
+                    candidate_profile_ns.abort(400, f'{field} is required')
+            
+            # Check if email already exists
+            existing_candidate = CandidateMasterProfile.query.filter_by(email=data['email']).first()
+            if existing_candidate:
+                candidate_profile_ns.abort(400, f'Email {data["email"]} already exists')
+            
+            # Read PDF file data
+            pdf_data = pdf_file.read()
+            if not pdf_data:
+                candidate_profile_ns.abort(400, 'PDF file is empty')
+            
+            # Start database transaction
+            try:
+                # Create the main candidate profile
+                candidate = CandidateMasterProfile(
+                    first_name=data['first_name'],
+                    last_name=data['last_name'],
+                    email=data['email'],
+                    location=data.get('location'),
+                    phone_number=data.get('phone_number'),
+                    personal_summary=data.get('personal_summary'),
+                    availability_weeks=data.get('availability_weeks'),
+                    preferred_work_types=data.get('preferred_work_types'),
+                    right_to_work=data.get('right_to_work', False),
+                    salary_expectation=data.get('salary_expectation'),
+                    classification_of_interest=data.get('classification_of_interest'),
+                    sub_classification_of_interest=data.get('sub_classification_of_interest'),
+                    is_active=data.get('is_active', True)
+                )
+                
+                db.session.add(candidate)
+                db.session.flush()  # Get the candidate ID without committing
+                
+                # Track creation statistics
+                creation_stats = {
+                    'candidate_id': candidate.id,
+                    'records_created': {
+                        'career_history': 0,
+                        'skills': 0,
+                        'education': 0,
+                        'licenses_certifications': 0,
+                        'languages': 0,
+                        'resumes': 0
+                    },
+                    'validation_errors': [],
+                    'pdf_file_info': {
+                        'original_filename': pdf_file.filename,
+                        'file_size': len(pdf_data),
+                        'content_type': pdf_file.content_type or 'application/pdf'
+                    }
+                }
+                
+                # Create related records (same logic as before)
+                # Career history
+                if data.get('career_history'):
+                    for ch_data in data['career_history']:
+                        try:
+                            start_date = None
+                            end_date = None
+                            
+                            if ch_data.get('start_date'):
+                                if isinstance(ch_data['start_date'], str):
+                                    try:
+                                        start_date = datetime.strptime(ch_data['start_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid start_date format: {ch_data['start_date']}")
+                                else:
+                                    start_date = ch_data['start_date']
+                            
+                            if ch_data.get('end_date'):
+                                if isinstance(ch_data['end_date'], str):
+                                    try:
+                                        end_date = datetime.strptime(ch_data['end_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid end_date format: {ch_data['end_date']}")
+                                else:
+                                    end_date = ch_data['end_date']
+                            
+                            if ch_data.get('job_title') and ch_data.get('company_name'):
+                                career_history = CandidateCareerHistory(
+                                    candidate_id=candidate.id,
+                                    job_title=ch_data['job_title'],
+                                    company_name=ch_data['company_name'],
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    description=ch_data.get('description')
+                                )
+                                db.session.add(career_history)
+                                creation_stats['records_created']['career_history'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Career history error: {str(e)}")
+                
+                # Skills
+                if data.get('skills'):
+                    for skill_data in data['skills']:
+                        try:
+                            if skill_data.get('skills'):
+                                skill = CandidateSkills(
+                                    candidate_id=candidate.id,
+                                    career_history_id=skill_data.get('career_history_id'),
+                                    skills=skill_data['skills']
+                                )
+                                db.session.add(skill)
+                                creation_stats['records_created']['skills'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Skill error: {str(e)}")
+                
+                # Education
+                if data.get('education'):
+                    for edu_data in data['education']:
+                        try:
+                            start_date = None
+                            end_date = None
+                            
+                            if edu_data.get('start_date'):
+                                if isinstance(edu_data['start_date'], str):
+                                    try:
+                                        start_date = datetime.strptime(edu_data['start_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        try:
+                                            start_date = datetime.strptime(edu_data['start_date'], '%Y').date()
+                                        except ValueError:
+                                            creation_stats['validation_errors'].append(f"Invalid education start_date: {edu_data['start_date']}")
+                            
+                            if edu_data.get('end_date'):
+                                if isinstance(edu_data['end_date'], str):
+                                    try:
+                                        end_date = datetime.strptime(edu_data['end_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        try:
+                                            end_date = datetime.strptime(edu_data['end_date'], '%Y').date()
+                                        except ValueError:
+                                            creation_stats['validation_errors'].append(f"Invalid education end_date: {edu_data['end_date']}")
+                            
+                            if edu_data.get('school'):
+                                education = CandidateEducation(
+                                    candidate_id=candidate.id,
+                                    school=edu_data['school'],
+                                    degree=edu_data.get('degree'),
+                                    field_of_study=edu_data.get('field_of_study'),
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    grade=edu_data.get('grade'),
+                                    description=edu_data.get('description')
+                                )
+                                db.session.add(education)
+                                creation_stats['records_created']['education'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Education error: {str(e)}")
+                
+                # Licenses & Certifications
+                if data.get('licenses_certifications'):
+                    for cert_data in data['licenses_certifications']:
+                        try:
+                            issue_date = None
+                            expiration_date = None
+                            
+                            if cert_data.get('issue_date'):
+                                if isinstance(cert_data['issue_date'], str):
+                                    try:
+                                        issue_date = datetime.strptime(cert_data['issue_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid cert issue_date: {cert_data['issue_date']}")
+                            
+                            if cert_data.get('expiration_date'):
+                                if isinstance(cert_data['expiration_date'], str):
+                                    try:
+                                        expiration_date = datetime.strptime(cert_data['expiration_date'], '%Y-%m-%d').date()
+                                    except ValueError:
+                                        creation_stats['validation_errors'].append(f"Invalid cert expiration_date: {cert_data['expiration_date']}")
+                            
+                            if cert_data.get('name'):
+                                certification = CandidateLicensesCertifications(
+                                    candidate_id=candidate.id,
+                                    name=cert_data['name'],
+                                    issuing_organization=cert_data.get('issuing_organization'),
+                                    issue_date=issue_date,
+                                    expiration_date=expiration_date,
+                                    credential_id=cert_data.get('credential_id'),
+                                    credential_url=cert_data.get('credential_url')
+                                )
+                                db.session.add(certification)
+                                creation_stats['records_created']['licenses_certifications'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Certification error: {str(e)}")
+                
+                # Languages
+                if data.get('languages'):
+                    for lang_data in data['languages']:
+                        try:
+                            if lang_data.get('language'):
+                                language = CandidateLanguages(
+                                    candidate_id=candidate.id,
+                                    language=lang_data['language'],
+                                    proficiency_level=lang_data.get('proficiency_level')
+                                )
+                                db.session.add(language)
+                                creation_stats['records_created']['languages'] += 1
+                        except Exception as e:
+                            creation_stats['validation_errors'].append(f"Language error: {str(e)}")
+                
+                # Create the resume record with PDF data
+                try:
+                    resume = CandidateResume(
+                        candidate_id=candidate.id,
+                        pdf_data=pdf_data,
+                        file_name=pdf_file.filename,
+                        file_size=len(pdf_data),
+                        content_type=pdf_file.content_type or 'application/pdf'
+                    )
+                    db.session.add(resume)
+                    creation_stats['records_created']['resumes'] += 1
+                except Exception as e:
+                    creation_stats['validation_errors'].append(f"PDF storage error: {str(e)}")
+                
+                # Commit all changes
+                db.session.commit()
+                
+                # Calculate success metrics
+                total_records_created = sum(creation_stats['records_created'].values()) + 1  # +1 for candidate
+                
+                creation_stats['success_rate'] = round(
+                    (total_records_created - len(creation_stats['validation_errors'])) / max(total_records_created, 1) * 100, 2
+                ) if total_records_created > 0 else 100
+                
+                # Get the complete candidate data with relationships
+                candidate_with_relationships = candidate.to_dict(include_relationships=True)
+                
+                return {
+                    'success': True,
+                    'message': f'Candidate profile created successfully with {total_records_created} total records and PDF file. Success rate: {creation_stats["success_rate"]}%',
+                    'candidate': candidate_with_relationships,
+                    'creation_stats': creation_stats
+                }, 201
+                
+            except Exception as e:
+                db.session.rollback()
+                candidate_profile_ns.abort(500, f'Failed to create candidate profile: {str(e)}')
+                
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'An unexpected error occurred: {str(e)}')
+
 @candidate_profile_ns.route('/parse-resume/supported-formats')
 class CandidateResumeParserInfo(Resource):
     @candidate_profile_ns.doc('get_resume_parser_info')
@@ -816,17 +1113,56 @@ class CandidateBulkCreate(Resource):
                 if data.get('resumes'):
                     for resume_data in data['resumes']:
                         try:
-                            if resume_data.get('azure_blob_url'):
-                                resume = CandidateResume(
-                                    candidate_id=candidate.id,
-                                    azure_blob_url=resume_data['azure_blob_url'],
-                                    file_name=resume_data.get('file_name'),
-                                    file_size=resume_data.get('file_size')
-                                )
-                                db.session.add(resume)
-                                creation_stats['records_created']['resumes'] += 1
+                            if resume_data.get('file_name'):
+                                # Handle base64 encoded PDF data if provided
+                                pdf_data = None
+                                if resume_data.get('pdf_data_base64'):
+                                    import base64
+                                    pdf_data = base64.b64decode(resume_data['pdf_data_base64'])
+                                
+                                if pdf_data:
+                                    resume = CandidateResume(
+                                        candidate_id=candidate.id,
+                                        pdf_data=pdf_data,
+                                        file_name=resume_data['file_name'],
+                                        file_size=resume_data.get('file_size', len(pdf_data)),
+                                        content_type=resume_data.get('content_type', 'application/pdf')
+                                    )
+                                    db.session.add(resume)
+                                    creation_stats['records_created']['resumes'] += 1
                         except Exception as e:
                             creation_stats['validation_errors'].append(f"Resume error: {str(e)}")
+                
+                # Handle direct PDF file upload (base64 encoded)
+                if data.get('resume_file'):
+                    try:
+                        import base64
+                        
+                        # Decode the base64 PDF data
+                        if isinstance(data['resume_file'], str):
+                            # If it's a base64 string
+                            pdf_data = base64.b64decode(data['resume_file'])
+                        elif isinstance(data['resume_file'], dict):
+                            # If it's an object with base64 data
+                            pdf_data = base64.b64decode(data['resume_file'].get('data', ''))
+                        else:
+                            raise ValueError("Invalid resume_file format")
+                        
+                        # Generate a filename if not provided
+                        file_name = data.get('file_name', f"{data['first_name']}_{data['last_name']}_resume.pdf")
+                        
+                        resume = CandidateResume(
+                            candidate_id=candidate.id,
+                            pdf_data=pdf_data,
+                            file_name=file_name,
+                            file_size=len(pdf_data),
+                            content_type='application/pdf'
+                        )
+                        db.session.add(resume)
+                        creation_stats['records_created']['resumes'] += 1
+                        
+                    except Exception as e:
+                        creation_stats['validation_errors'].append(f"Direct PDF upload error: {str(e)}")
                 
                 # Commit all changes
                 db.session.commit()
@@ -862,3 +1198,38 @@ class CandidateBulkCreate(Resource):
                 
         except Exception as e:
             candidate_profile_ns.abort(500, f'An unexpected error occurred: {str(e)}') 
+
+@candidate_profile_ns.route('/resumes/<int:resume_id>/download')
+class CandidateResumeDownload(Resource):
+    @candidate_profile_ns.doc('download_resume_pdf')
+    @candidate_profile_ns.param('resume_id', 'Resume ID')
+    def get(self, resume_id):
+        """
+        Download PDF resume file
+        
+        Returns the PDF file as binary data with appropriate headers.
+        """
+        try:
+            from flask import Response
+            
+            resume = CandidateResume.query.filter_by(id=resume_id, is_active=True).first()
+            if not resume:
+                candidate_profile_ns.abort(404, 'Resume not found')
+            
+            if not resume.pdf_data:
+                candidate_profile_ns.abort(404, 'PDF data not found')
+            
+            # Return PDF as binary response
+            response = Response(
+                resume.pdf_data,
+                mimetype=resume.content_type or 'application/pdf',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{resume.file_name}"',
+                    'Content-Length': str(resume.file_size)
+                }
+            )
+            
+            return response
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Download failed: {str(e)}') 

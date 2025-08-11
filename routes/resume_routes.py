@@ -3,6 +3,7 @@ from flask_restx import Namespace, Resource, fields
 from database import db
 from models import CandidateResume, CandidateMasterProfile
 from datetime import datetime
+from werkzeug.datastructures import FileStorage
 
 resume_ns = Namespace('resumes', description='Resume operations')
 
@@ -10,9 +11,9 @@ resume_ns = Namespace('resumes', description='Resume operations')
 resume_model = resume_ns.model('Resume', {
     'id': fields.Integer(readonly=True, description='Resume ID'),
     'candidate_id': fields.Integer(required=True, description='Candidate ID'),
-    'azure_blob_url': fields.String(required=True, description='Azure blob storage URL'),
-    'file_name': fields.String(description='Original file name'),
-    'file_size': fields.Integer(description='File size in bytes'),
+    'file_name': fields.String(required=True, description='Original file name'),
+    'file_size': fields.Integer(required=True, description='File size in bytes'),
+    'content_type': fields.String(description='MIME type of the file'),
     'upload_date': fields.DateTime(description='Upload date'),
     'is_active': fields.Boolean(description='Is active'),
     'created_date': fields.DateTime(readonly=True, description='Creation date'),
@@ -21,9 +22,10 @@ resume_model = resume_ns.model('Resume', {
 
 resume_input_model = resume_ns.model('ResumeInput', {
     'candidate_id': fields.Integer(required=True, description='Candidate ID'),
-    'azure_blob_url': fields.String(required=True, description='Azure blob storage URL'),
-    'file_name': fields.String(description='Original file name'),
-    'file_size': fields.Integer(description='File size in bytes')
+    'file_name': fields.String(required=True, description='Original file name'),
+    'file_size': fields.Integer(required=True, description='File size in bytes'),
+    'content_type': fields.String(description='MIME type of the file'),
+    'pdf_data_base64': fields.String(required=True, description='Base64 encoded PDF data')
 })
 
 resume_list_model = resume_ns.model('ResumeList', {
@@ -100,37 +102,115 @@ class ResumeList(Resource):
     @resume_ns.doc('create_resume')
     @resume_ns.expect(resume_input_model)
     def post(self):
-        """Create a new resume record"""
+        """Create a new resume record with PDF data"""
         try:
             data = request.get_json()
             
             # Validate required fields
             if not data.get('candidate_id'):
                 resume_ns.abort(400, 'candidate_id is required')
-            if not data.get('azure_blob_url'):
-                resume_ns.abort(400, 'azure_blob_url is required')
+            if not data.get('pdf_data_base64'):
+                resume_ns.abort(400, 'pdf_data_base64 is required')
+            if not data.get('file_name'):
+                resume_ns.abort(400, 'file_name is required')
+            if not data.get('file_size'):
+                resume_ns.abort(400, 'file_size is required')
             
             # Verify candidate exists
             candidate = CandidateMasterProfile.query.get(data['candidate_id'])
             if not candidate:
                 resume_ns.abort(404, 'Candidate not found')
             
-            # Validate file size if provided
+            # Validate file size
             file_size = data.get('file_size')
-            if file_size is not None and file_size < 0:
+            if file_size <= 0:
                 resume_ns.abort(400, 'file_size must be a positive number')
             
-            # Validate URL format (basic check)
-            azure_blob_url = data['azure_blob_url']
-            if not azure_blob_url.startswith(('http://', 'https://')):
-                resume_ns.abort(400, 'azure_blob_url must be a valid URL')
+            # Validate and decode PDF data
+            try:
+                import base64
+                pdf_data = base64.b64decode(data['pdf_data_base64'])
+                if len(pdf_data) == 0:
+                    resume_ns.abort(400, 'PDF data is empty')
+                
+                # Verify file size matches actual data size
+                if abs(len(pdf_data) - file_size) > 100:  # Allow small variance
+                    resume_ns.abort(400, f'File size mismatch. Expected: {file_size}, Actual: {len(pdf_data)}')
+                    
+            except Exception as e:
+                resume_ns.abort(400, f'Invalid base64 PDF data: {str(e)}')
+            
+            # Validate file name
+            file_name = data['file_name'].strip()
+            if not file_name.lower().endswith('.pdf'):
+                resume_ns.abort(400, 'Only PDF files are supported')
             
             # Create new resume record
             resume_record = CandidateResume(
                 candidate_id=data['candidate_id'],
-                azure_blob_url=azure_blob_url,
-                file_name=data.get('file_name'),
-                file_size=file_size
+                pdf_data=pdf_data,
+                file_name=file_name,
+                file_size=len(pdf_data),  # Use actual data size
+                content_type=data.get('content_type', 'application/pdf')
+            )
+            
+            db.session.add(resume_record)
+            db.session.commit()
+            
+            return resume_record.to_dict(), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            resume_ns.abort(500, str(e))
+
+# Add multipart parser for PDF upload
+upload_parser = resume_ns.parser()
+upload_parser.add_argument('pdf_file', 
+                          location='files',
+                          type=FileStorage,
+                          required=True,
+                          help='PDF resume file')
+upload_parser.add_argument('candidate_id',
+                          location='form',
+                          type=int,
+                          required=True,
+                          help='Candidate ID')
+
+@resume_ns.route('/upload')
+class ResumeUpload(Resource):
+    @resume_ns.doc('upload_resume_pdf')
+    @resume_ns.expect(upload_parser)
+    def post(self):
+        """Upload a PDF resume file directly"""
+        try:
+            args = upload_parser.parse_args()
+            pdf_file = args['pdf_file']
+            candidate_id = args['candidate_id']
+            
+            # Validate PDF file
+            if not pdf_file or pdf_file.filename == '':
+                resume_ns.abort(400, 'No PDF file provided')
+            
+            if not pdf_file.filename.lower().endswith('.pdf'):
+                resume_ns.abort(400, 'Only PDF files are allowed')
+            
+            # Verify candidate exists
+            candidate = CandidateMasterProfile.query.get(candidate_id)
+            if not candidate:
+                resume_ns.abort(404, 'Candidate not found')
+            
+            # Read PDF file data
+            pdf_data = pdf_file.read()
+            if not pdf_data:
+                resume_ns.abort(400, 'PDF file is empty')
+            
+            # Create new resume record
+            resume_record = CandidateResume(
+                candidate_id=candidate_id,
+                pdf_data=pdf_data,
+                file_name=pdf_file.filename,
+                file_size=len(pdf_data),
+                content_type=pdf_file.content_type or 'application/pdf'
             )
             
             db.session.add(resume_record)
@@ -169,20 +249,39 @@ class Resume(Resource):
                 if not candidate:
                     resume_ns.abort(404, 'Candidate not found')
             
-            # Validate file size if provided
-            if 'file_size' in data and data['file_size'] is not None and data['file_size'] < 0:
-                resume_ns.abort(400, 'file_size must be a positive number')
+            # Handle PDF data update if provided
+            if 'pdf_data_base64' in data:
+                try:
+                    import base64
+                    pdf_data = base64.b64decode(data['pdf_data_base64'])
+                    if len(pdf_data) == 0:
+                        resume_ns.abort(400, 'PDF data is empty')
+                    
+                    resume_record.pdf_data = pdf_data
+                    resume_record.file_size = len(pdf_data)  # Update file size to match actual data
+                    
+                except Exception as e:
+                    resume_ns.abort(400, f'Invalid base64 PDF data: {str(e)}')
             
-            # Validate URL format if provided
-            if 'azure_blob_url' in data:
-                azure_blob_url = data['azure_blob_url']
-                if not azure_blob_url.startswith(('http://', 'https://')):
-                    resume_ns.abort(400, 'azure_blob_url must be a valid URL')
+            # Validate file size if provided separately
+            if 'file_size' in data and 'pdf_data_base64' not in data:
+                if data['file_size'] <= 0:
+                    resume_ns.abort(400, 'file_size must be a positive number')
             
-            # Update fields
+            # Validate file name if provided
+            if 'file_name' in data:
+                file_name = data['file_name'].strip()
+                if not file_name.lower().endswith('.pdf'):
+                    resume_ns.abort(400, 'Only PDF files are supported')
+            
+            # Update fields (excluding pdf_data_base64 as it's handled above)
             updatable_fields = [
-                'candidate_id', 'azure_blob_url', 'file_name', 'file_size', 'is_active'
+                'candidate_id', 'file_name', 'content_type', 'is_active'
             ]
+            
+            # Only update file_size if PDF data wasn't provided (to avoid overriding calculated size)
+            if 'pdf_data_base64' not in data and 'file_size' in data:
+                updatable_fields.append('file_size')
             
             for field in updatable_fields:
                 if field in data:
@@ -268,12 +367,44 @@ class CandidateResumeList(Resource):
         except Exception as e:
             resume_ns.abort(500, str(e))
 
-@resume_ns.route('/<int:resume_id>/download-url')
+@resume_ns.route('/<int:resume_id>/download')
 @resume_ns.param('resume_id', 'Resume ID')
-class ResumeDownloadUrl(Resource):
-    @resume_ns.doc('get_resume_download_url')
+class ResumeDownload(Resource):
+    @resume_ns.doc('download_resume_pdf')
     def get(self, resume_id):
-        """Get the download URL for a specific resume"""
+        """Download the PDF file for a specific resume"""
+        try:
+            from flask import Response
+            
+            resume_record = CandidateResume.query.get_or_404(resume_id)
+            
+            if not resume_record.is_active:
+                resume_ns.abort(410, 'Resume is no longer active')
+            
+            if not resume_record.pdf_data:
+                resume_ns.abort(404, 'PDF data not found')
+            
+            # Return PDF as binary response
+            response = Response(
+                resume_record.pdf_data,
+                mimetype=resume_record.content_type or 'application/pdf',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{resume_record.file_name}"',
+                    'Content-Length': str(resume_record.file_size)
+                }
+            )
+            
+            return response
+            
+        except Exception as e:
+            resume_ns.abort(500, f'Download failed: {str(e)}')
+
+@resume_ns.route('/<int:resume_id>/info')
+@resume_ns.param('resume_id', 'Resume ID')
+class ResumeInfo(Resource):
+    @resume_ns.doc('get_resume_info')
+    def get(self, resume_id):
+        """Get resume information without downloading the file"""
         try:
             resume_record = CandidateResume.query.get_or_404(resume_id)
             
@@ -282,10 +413,11 @@ class ResumeDownloadUrl(Resource):
             
             return {
                 'resume_id': resume_id,
-                'download_url': resume_record.azure_blob_url,
                 'file_name': resume_record.file_name,
                 'file_size': resume_record.file_size,
-                'upload_date': resume_record.upload_date.isoformat() if resume_record.upload_date else None
+                'content_type': resume_record.content_type,
+                'upload_date': resume_record.upload_date.isoformat() if resume_record.upload_date else None,
+                'download_url': f'/resumes/{resume_id}/download'
             }, 200
             
         except Exception as e:

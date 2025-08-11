@@ -99,9 +99,10 @@ CREATE TABLE candidate_languages (
 CREATE TABLE candidate_resume (
     id SERIAL PRIMARY KEY,
     candidate_id INTEGER NOT NULL REFERENCES candidate_master_profile(id) ON DELETE CASCADE,
-    azure_blob_url VARCHAR(500) NOT NULL, -- Azure blob storage URL for PDF
-    file_name VARCHAR(255),
-    file_size BIGINT,
+    pdf_data BYTEA NOT NULL, -- PDF file stored as binary data
+    file_name VARCHAR(255) NOT NULL,
+    file_size BIGINT NOT NULL,
+    content_type VARCHAR(100) DEFAULT 'application/pdf',
     upload_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT true,
     created_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

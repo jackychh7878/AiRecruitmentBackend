@@ -209,26 +209,34 @@ class CandidateResume(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     candidate_id = db.Column(db.Integer, db.ForeignKey('candidate_master_profile.id'), nullable=False)
-    azure_blob_url = db.Column(db.String(500), nullable=False)
-    file_name = db.Column(db.String(255))
-    file_size = db.Column(db.BigInteger)
+    pdf_data = db.Column(db.LargeBinary, nullable=False)  # Store PDF as binary data
+    file_name = db.Column(db.String(255), nullable=False)
+    file_size = db.Column(db.BigInteger, nullable=False)
+    content_type = db.Column(db.String(100), default='application/pdf')
     upload_date = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
     created_date = db.Column(db.DateTime, default=datetime.utcnow)
     last_modified_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    def to_dict(self):
-        return {
+    def to_dict(self, include_pdf_data=False):
+        data = {
             'id': self.id,
             'candidate_id': self.candidate_id,
-            'azure_blob_url': self.azure_blob_url,
             'file_name': self.file_name,
             'file_size': self.file_size,
+            'content_type': self.content_type,
             'upload_date': self.upload_date.isoformat() if self.upload_date else None,
             'is_active': self.is_active,
             'created_date': self.created_date.isoformat() if self.created_date else None,
             'last_modified_date': self.last_modified_date.isoformat() if self.last_modified_date else None
         }
+        
+        # Only include PDF data if explicitly requested (for downloads)
+        if include_pdf_data and self.pdf_data:
+            import base64
+            data['pdf_data_base64'] = base64.b64encode(self.pdf_data).decode('utf-8')
+        
+        return data
 
 class AiRecruitmentComCode(db.Model):
     __tablename__ = 'ai_recruitment_com_code'

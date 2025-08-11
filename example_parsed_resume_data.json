@@ -129,5 +129,6 @@
       "proficiency_level": "Beginner"
     }
   ],
-  "resumes": []
+  "resumes": [],
+  "resume_file": "base64_encoded_pdf_data_would_go_here"
 } 

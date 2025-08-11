@@ -183,11 +183,11 @@ curl -X POST \
 
 **POST** `/candidates/create-from-parsed-data`
 
-Create a complete candidate profile directly from parsed resume data.
+Create a complete candidate profile directly from parsed resume data (JSON only).
 
 #### Request
 - **Content-Type**: `application/json`
-- **Body**: JSON object with candidate data (same format as resume parser output)
+- **Body**: JSON object with candidate data (includes optional base64 PDF data)
 
 #### Example using curl:
 ```bash
@@ -196,6 +196,69 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d @example_parsed_resume_data.json
 ```
+
+### 3. Create Candidate with PDF File
+
+**POST** `/candidates/create-with-pdf`
+
+Create a complete candidate profile from parsed resume data + original PDF file.
+
+#### Request
+- **Content-Type**: `multipart/form-data`
+- **Form Fields**:
+  - `pdf_file`: PDF file (required)
+  - `candidate_data`: JSON string with candidate data (required)
+
+#### Example using curl:
+```bash
+curl -X POST \
+  http://localhost:5000/candidates/create-with-pdf \
+  -F "pdf_file=@resume.pdf" \
+  -F "candidate_data={\"first_name\":\"John\",\"last_name\":\"Doe\",\"email\":\"john@example.com\"}"
+```
+
+### 4. Resume Management APIs
+
+#### Create Resume with Base64 Data
+**POST** `/resumes/`
+- **Content-Type**: `application/json`
+- **Body**: JSON with base64 encoded PDF data
+
+```json
+{
+  "candidate_id": 123,
+  "file_name": "resume.pdf",
+  "file_size": 1024000,
+  "content_type": "application/pdf",
+  "pdf_data_base64": "JVBERi0xLjQK..."
+}
+```
+
+#### Upload Resume File
+**POST** `/resumes/upload`
+- **Content-Type**: `multipart/form-data`
+- **Form Fields**:
+  - `pdf_file`: PDF file (required)
+  - `candidate_id`: Candidate ID (required)
+
+#### Download Resume PDF
+**GET** `/resumes/{resume_id}/download`
+
+Download the stored PDF file for a resume.
+
+#### Response
+- **Content-Type**: `application/pdf`
+- **Headers**: `Content-Disposition: attachment; filename="resume.pdf"`
+
+#### Get Resume Info
+**GET** `/resumes/{resume_id}/info`
+
+Get resume metadata without downloading the file.
+
+#### List All Resumes
+**GET** `/resumes/`
+
+List all resume records with pagination and filtering options.
 
 #### Response Format:
 ```json
@@ -229,7 +292,7 @@ curl -X POST \
 }
 ```
 
-### 3. Get Parser Information
+### 5. Get Parser Information
 
 **GET** `/candidates/parse-resume/supported-formats`
 
