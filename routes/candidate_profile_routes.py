@@ -8,6 +8,81 @@ import json
 # Create namespace
 candidate_profile_ns = Namespace('candidates', description='Candidate profile operations')
 
+# Define relationship models first
+career_history_model = candidate_profile_ns.model('CareerHistory', {
+    'id': fields.Integer(readonly=True, description='Career history ID'),
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'job_title': fields.String(description='Job title'),
+    'company_name': fields.String(description='Company name'),
+    'start_date': fields.String(description='Start date'),
+    'end_date': fields.String(description='End date'),
+    'description': fields.String(description='Job description'),
+    'is_active': fields.Boolean(description='Is active'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
+skills_model = candidate_profile_ns.model('Skills', {
+    'id': fields.Integer(readonly=True, description='Skill ID'),
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'career_history_id': fields.Integer(description='Career history ID'),
+    'skills': fields.String(description='Skills'),
+    'is_active': fields.Boolean(description='Is active'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
+education_model = candidate_profile_ns.model('Education', {
+    'id': fields.Integer(readonly=True, description='Education ID'),
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'school': fields.String(description='School name'),
+    'degree': fields.String(description='Degree'),
+    'field_of_study': fields.String(description='Field of study'),
+    'start_date': fields.String(description='Start date'),
+    'end_date': fields.String(description='End date'),
+    'grade': fields.String(description='Grade'),
+    'description': fields.String(description='Description'),
+    'is_active': fields.Boolean(description='Is active'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
+licenses_certifications_model = candidate_profile_ns.model('LicensesCertifications', {
+    'id': fields.Integer(readonly=True, description='License/Certification ID'),
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'name': fields.String(description='License/Certification name'),
+    'issuing_organization': fields.String(description='Issuing organization'),
+    'issue_date': fields.String(description='Issue date'),
+    'expiration_date': fields.String(description='Expiration date'),
+    'credential_id': fields.String(description='Credential ID'),
+    'credential_url': fields.String(description='Credential URL'),
+    'is_active': fields.Boolean(description='Is active'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
+languages_model = candidate_profile_ns.model('Languages', {
+    'id': fields.Integer(readonly=True, description='Language ID'),
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'language': fields.String(description='Language'),
+    'proficiency_level': fields.String(description='Proficiency level'),
+    'is_active': fields.Boolean(description='Is active'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
+resumes_model = candidate_profile_ns.model('Resumes', {
+    'id': fields.Integer(readonly=True, description='Resume ID'),
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'azure_blob_url': fields.String(description='Azure blob URL'),
+    'file_name': fields.String(description='File name'),
+    'file_size': fields.Integer(description='File size'),
+    'upload_date': fields.DateTime(description='Upload date'),
+    'is_active': fields.Boolean(description='Is active'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
 # Define data models for Swagger documentation
 candidate_model = candidate_profile_ns.model('Candidate', {
     'id': fields.Integer(readonly=True, description='Candidate ID'),
@@ -28,7 +103,14 @@ candidate_model = candidate_profile_ns.model('Candidate', {
     'ai_short_summary': fields.String(description='AI generated short summary'),
     'metadata_json': fields.Raw(description='Additional metadata'),
     'created_date': fields.DateTime(readonly=True, description='Creation date'),
-    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date'),
+    # Relationship fields
+    'career_history': fields.List(fields.Nested(career_history_model), description='Career history'),
+    'skills': fields.List(fields.Nested(skills_model), description='Skills'),
+    'education': fields.List(fields.Nested(education_model), description='Education'),
+    'licenses_certifications': fields.List(fields.Nested(licenses_certifications_model), description='Licenses and certifications'),
+    'languages': fields.List(fields.Nested(languages_model), description='Languages'),
+    'resumes': fields.List(fields.Nested(resumes_model), description='Resumes')
 })
 
 candidate_input_model = candidate_profile_ns.model('CandidateInput', {
@@ -60,7 +142,6 @@ candidate_list_model = candidate_profile_ns.model('CandidateList', {
 @candidate_profile_ns.route('/')
 class CandidateList(Resource):
     @candidate_profile_ns.doc('get_all_candidates')
-    @candidate_profile_ns.marshal_with(candidate_list_model)
     @candidate_profile_ns.param('page', 'Page number', type=int, default=1)
     @candidate_profile_ns.param('per_page', 'Items per page', type=int, default=10)
     @candidate_profile_ns.param('is_active', 'Filter by active status', type=bool)
@@ -110,7 +191,6 @@ class CandidateList(Resource):
 
     @candidate_profile_ns.doc('create_candidate')
     @candidate_profile_ns.expect(candidate_input_model)
-    @candidate_profile_ns.marshal_with(candidate_model, code=201)
     def post(self):
         """Create a new candidate"""
         try:
@@ -159,7 +239,6 @@ class CandidateList(Resource):
 @candidate_profile_ns.param('candidate_id', 'Candidate ID')
 class Candidate(Resource):
     @candidate_profile_ns.doc('get_candidate')
-    @candidate_profile_ns.marshal_with(candidate_model)
     @candidate_profile_ns.param('include_relationships', 'Include related data', type=bool, default=True)
     def get(self, candidate_id):
         """Get a specific candidate by ID"""
@@ -167,14 +246,15 @@ class Candidate(Resource):
             include_relationships = request.args.get('include_relationships', 'true').lower() == 'true'
             
             candidate = CandidateMasterProfile.query.get_or_404(candidate_id)
-            return candidate.to_dict(include_relationships=include_relationships), 200
+            result = candidate.to_dict(include_relationships=include_relationships)
+            
+            return result, 200
             
         except Exception as e:
             candidate_profile_ns.abort(500, str(e))
 
     @candidate_profile_ns.doc('update_candidate')
     @candidate_profile_ns.expect(candidate_input_model)
-    @candidate_profile_ns.marshal_with(candidate_model)
     def put(self, candidate_id):
         """Update an existing candidate"""
         try:
@@ -248,7 +328,6 @@ class CandidateHardDelete(Resource):
 @candidate_profile_ns.route('/search')
 class CandidateSearch(Resource):
     @candidate_profile_ns.doc('search_candidates')
-    @candidate_profile_ns.marshal_with(candidate_list_model)
     @candidate_profile_ns.param('q', 'Search query', required=True)
     @candidate_profile_ns.param('page', 'Page number', type=int, default=1)
     @candidate_profile_ns.param('per_page', 'Items per page', type=int, default=10)
