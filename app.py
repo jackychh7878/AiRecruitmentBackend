@@ -1,10 +1,10 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from datetime import datetime
 import os
 from sqlalchemy import text
 import logging
+from database import db
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -17,8 +17,8 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Initialize SQLAlchemy
-db = SQLAlchemy(app)
+# Initialize SQLAlchemy with app
+db.init_app(app)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -153,4 +153,4 @@ def api_docs():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000) 
+    app.run(debug=True, use_debugger=False, use_reloader=False, host='0.0.0.0', port=5000)
