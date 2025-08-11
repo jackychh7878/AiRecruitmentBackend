@@ -67,7 +67,6 @@ class CareerHistoryList(Resource):
 
     @career_history_ns.doc('create_career_history')
     @career_history_ns.expect(career_history_input_model)
-    @career_history_ns.marshal_with(career_history_model, code=201)
     def post(self):
         """Create a new career history record"""
         try:
@@ -115,7 +114,6 @@ class CareerHistoryList(Resource):
 @career_history_ns.param('career_id', 'Career history ID')
 class CareerHistory(Resource):
     @career_history_ns.doc('get_career_history')
-    @career_history_ns.marshal_with(career_history_model)
     def get(self, career_id):
         """Get a specific career history record by ID"""
         try:
@@ -126,7 +124,6 @@ class CareerHistory(Resource):
 
     @career_history_ns.doc('update_career_history')
     @career_history_ns.expect(career_history_input_model)
-    @career_history_ns.marshal_with(career_history_model)
     def put(self, career_id):
         """Update an existing career history record"""
         try:
