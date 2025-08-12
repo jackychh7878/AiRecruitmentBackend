@@ -44,6 +44,33 @@ with app.app_context():
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Environment-based configuration
+FLASK_ENV = os.getenv('FLASK_ENV', 'production')
+DEBUG_MODE = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+
+# Set Flask configuration based on environment
+if FLASK_ENV == 'development':
+    app.config['DEBUG'] = True
+    app.config['TESTING'] = False
+    logger.info("Running in DEVELOPMENT mode")
+else:
+    app.config['DEBUG'] = False
+    app.config['TESTING'] = False
+    logger.info("Running in PRODUCTION mode")
+
+# Security configurations for production
+if FLASK_ENV == 'production':
+    app.config['PREFERRED_URL_SCHEME'] = 'https'
+    # Disable detailed error messages in production
+    app.config['PROPAGATE_EXCEPTIONS'] = False
+    # Security headers
+    app.config['SESSION_COOKIE_SECURE'] = True
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    # Disable debug mode
+    app.debug = False
+    app.testing = False
+
 # Import all route namespaces
 from routes.candidate_profile_routes import candidate_profile_ns
 from routes.career_history_routes import career_history_ns
@@ -100,4 +127,16 @@ def internal_error(error):
 # API documentation is now available at /swagger/
 
 if __name__ == '__main__':
-    app.run(debug=True, use_debugger=False, use_reloader=False, host='0.0.0.0', port=5000)
+    # Only run Flask development server in development mode
+    if FLASK_ENV == 'development':
+        logger.info("Starting Flask development server...")
+        app.run(
+            debug=DEBUG_MODE,
+            use_debugger=DEBUG_MODE,
+            use_reloader=DEBUG_MODE,
+            host=os.getenv('HOST', '0.0.0.0'),
+            port=int(os.getenv('PORT', 5000))
+        )
+    else:
+        logger.info("Production mode: Use Gunicorn or production WSGI server")
+        logger.info("Run with: gunicorn -w 4 -b 0.0.0.0:5000 app:app")

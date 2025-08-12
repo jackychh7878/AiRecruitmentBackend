@@ -6,6 +6,40 @@ This repository contains the PostgreSQL database schema for an AI-powered recrui
 
 The database is designed to store detailed candidate information including personal details, career history, skills, education, certifications, languages, and resume files. It supports AI/ML capabilities through embedding vectors and includes proper indexing for efficient querying.
 
+## 🐳 Docker Deployment
+
+### Quick Start with Docker
+
+```bash
+# Build and run the application
+chmod +x build-and-run.sh
+./build-and-run.sh
+```
+
+### Manual Docker Commands
+
+```bash
+# Build the image
+docker build -t ai-recruitment-backend .
+
+# Run the container
+docker run -d \
+  --name ai-recruitment-backend \
+  -p 5000:5000 \
+  --env-file .env \
+  ai-recruitment-backend
+```
+
+### Azure Container Apps Deployment
+
+```bash
+# Deploy to Azure Container Apps
+chmod +x deploy-azure.sh
+./deploy-azure.sh
+```
+
+For detailed deployment instructions, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md).
+
 ## Database Schema
 
 ### Main Tables
@@ -122,73 +156,65 @@ AND c.is_active = true;
 
 #### Vector similarity search (requires embedding data)
 ```sql
-SELECT c.first_name, c.last_name, c.ai_short_summary,
-       c.embedding_vector <-> '[0.1,0.2,...]'::vector as similarity
+SELECT 
+    c.first_name, 
+    c.last_name, 
+    c.email,
+    c.embedding_vector <=> '[0.1, 0.2, ...]'::vector as distance
 FROM candidate_master_profile c
 WHERE c.embedding_vector IS NOT NULL
-ORDER BY similarity
+ORDER BY distance
 LIMIT 10;
 ```
 
-### Data Insertion Examples
+## API Endpoints
 
-#### Add new candidate
-```sql
-INSERT INTO candidate_master_profile (
-    first_name, last_name, email, location, personal_summary,
-    preferred_work_types, right_to_work, salary_expectation
-) VALUES (
-    'Jane', 'Doe', 'jane.doe@email.com', 'Perth, WA', 
-    'Experienced project manager with agile methodology expertise',
-    'FULL_TIME,HYBRID', true, 110000.00
-);
+The application provides a comprehensive REST API with Swagger documentation:
+
+- **Health Check**: `GET /api/health`
+- **Swagger UI**: `/swagger/`
+- **Candidates**: `/api/candidates`
+- **Resumes**: `/api/resumes`
+- **Skills**: `/api/skills`
+- **Education**: `/api/education`
+- **Languages**: `/api/languages`
+- **Licenses**: `/api/licenses-certifications`
+
+## Docker Features
+
+- **Pre-loaded AI Models**: spaCy NER and NLTK data included
+- **Health Monitoring**: Built-in health checks and monitoring
+- **Production Ready**: Gunicorn server with optimized configuration
+- **Azure Optimized**: Ready for Azure Container Apps deployment
+
+## Environment Configuration
+
+Copy `env.example` to `.env` and configure:
+
+```bash
+# Database
+DATABASE_URL=postgresql://username:password@host:port/database
+
+# OpenAI
+OPENAI_API_KEY=your_openai_api_key
+AZURE_OPENAI_API_KEY=your_azure_openai_key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+
+# Flask
+FLASK_ENV=production
+HOST=0.0.0.0
+PORT=5000
+WORKERS=4
 ```
 
-## Database Maintenance
+## Contributing
 
-### Regular Maintenance Tasks
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-1. **Update Statistics**
-   ```sql
-   ANALYZE;
-   ```
+## License
 
-2. **Reindex Vector Indexes** (if using many embeddings)
-   ```sql
-   REINDEX INDEX idx_candidate_master_profile_embedding;
-   ```
-
-3. **Clean Up Inactive Records** (optional)
-   ```sql
-   DELETE FROM candidate_skills WHERE is_active = false 
-   AND last_modified_date < NOW() - INTERVAL '1 year';
-   ```
-
-## Schema Considerations
-
-### Scalability
-- Simple integer primary keys for easy management and better performance
-- Proper indexing for common query patterns
-- Vector indexes for AI similarity searches
-
-### Flexibility
-- JSONB metadata fields for evolving requirements
-- Soft delete pattern preserves data integrity
-- Configurable lookup codes
-
-### Data Quality
-- Email uniqueness prevents duplicates
-- Foreign key constraints maintain referential integrity
-- Automatic timestamp management
-
-## Future Enhancements
-
-- [ ] Add audit trail tables
-- [ ] Implement data retention policies
-- [ ] Add more sophisticated search capabilities
-- [ ] Include job matching tables
-- [ ] Add candidate scoring/ranking tables
-
-## Support
-
-For questions or issues with the database schema, please refer to the PostgreSQL documentation or create an issue in this repository. 
+This project is licensed under the MIT License - see the LICENSE file for details. 
