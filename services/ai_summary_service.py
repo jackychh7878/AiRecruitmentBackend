@@ -51,8 +51,25 @@ class CandidateAISummaryService:
             print(f"Failed to initialize AI service: {str(init_error)}")
             raise init_error
         
-        # Default prompt template - can be customized
-        self.default_prompt_template = """
+        # Note: Prompt templates are now managed in the database
+        # This service will fetch the active template from AiPromptTemplate model
+    
+    def get_active_prompt_template(self):
+        """
+        Get the active prompt template from the database
+        
+        Returns:
+            PromptTemplate: LangChain PromptTemplate object
+        """
+        try:
+            # Import here to avoid circular imports
+            from models import AiPromptTemplate
+            
+            active_template = AiPromptTemplate.get_active_template()
+            
+            if not active_template:
+                # Fallback to a detailed template if no active template found
+                fallback_template = """
             You are an AI assistant specializing in creating professional candidate profile summaries for recruitment purposes.
             
             Given the candidate profile data below, create a concise professional summary in exactly 200 words or less following this format:
@@ -65,7 +82,7 @@ class CandidateAISummaryService:
             Other remarks: [additional relevant information]"
             
             Candidate Profile Data:
-            {candidate_data}
+            {candidate_profile_data}
             
             Please ensure the summary is:
             - Professional and concise
@@ -76,23 +93,48 @@ class CandidateAISummaryService:
             - Under 200 words total
             
             Summary:"""
-
-        self.prompt_template = PromptTemplate(
-            input_variables=["candidate_data"],
-            template=self.default_prompt_template
-        )
-    
-    def update_prompt_template(self, new_template: str):
-        """
-        Update the prompt template for AI summary generation
-        
-        Args:
-            new_template (str): New prompt template with {candidate_data} placeholder
-        """
-        self.prompt_template = PromptTemplate(
-            input_variables=["candidate_data"],
-            template=new_template
-        )
+                print("Warning: No active prompt template found, using fallback template")
+                return PromptTemplate(
+                    input_variables=["candidate_profile_data"],
+                    template=fallback_template
+                )
+            
+            return PromptTemplate(
+                input_variables=["candidate_profile_data"],
+                template=active_template.template_content
+            )
+            
+        except Exception as e:
+            print(f"Error fetching active prompt template: {str(e)}")
+            # Fallback template
+            fallback_template = """
+            You are an AI assistant specializing in creating professional candidate profile summaries for recruitment purposes.
+            
+            Given the candidate profile data below, create a concise professional summary in exactly 200 words or less following this format:
+            
+            "[X] years of experience in [position] in [domain field].
+            Graduated from [university/education].
+            Strengths: [key skills and strengths]
+            Looking for: [salary expectation and work preferences]
+            Open to work status: [availability and notice period]
+            Other remarks: [additional relevant information]"
+            
+            Candidate Profile Data:
+            {candidate_profile_data}
+            
+            Please ensure the summary is:
+            - Professional and concise
+            - Highlights key qualifications and experience
+            - Includes relevant education background
+            - Mentions salary expectations if available
+            - Notes work availability and preferences
+            - Under 200 words total
+            
+            Summary:"""
+            return PromptTemplate(
+                input_variables=["candidate_profile_data"],
+                template=fallback_template
+            )
     
     def format_candidate_data(self, candidate_dict: Dict[str, Any]) -> str:
         """
@@ -222,9 +264,13 @@ class CandidateAISummaryService:
             formatted_data = self.format_candidate_data(candidate_dict)
             print(f"Formatted data length: {len(formatted_data)} characters")
             
+            # Get the active prompt template from database
+            print("Fetching active prompt template...")
+            prompt_template = self.get_active_prompt_template()
+            
             # Create the prompt
             print("Creating prompt from template...")
-            prompt = self.prompt_template.format(candidate_data=formatted_data)
+            prompt = prompt_template.format(candidate_profile_data=formatted_data)
             print(f"Prompt created, length: {len(prompt)} characters")
             
             # Generate summary using LangChain

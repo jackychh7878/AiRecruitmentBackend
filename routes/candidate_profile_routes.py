@@ -4,7 +4,7 @@ from database import db
 from models import (
     CandidateMasterProfile, CandidateCareerHistory, CandidateSkills,
     CandidateEducation, CandidateLicensesCertifications, CandidateLanguages,
-    CandidateResume
+    CandidateResume, AiPromptTemplate
 )
 from datetime import datetime
 import json
@@ -605,49 +605,240 @@ class CandidateStats(Resource):
         except Exception as e:
             candidate_profile_ns.abort(500, str(e))
 
-# Prompt template management
+# Prompt template management models
 prompt_template_model = candidate_profile_ns.model('PromptTemplate', {
-    'template': fields.String(required=True, description='Prompt template with {candidate_data} placeholder'),
-    'description': fields.String(description='Description of the template purpose')
+    'id': fields.Integer(readonly=True, description='Template ID'),
+    'name': fields.String(required=True, description='Template name'),
+    'description': fields.String(description='Template description'),
+    'template_content': fields.String(required=True, description='Prompt template with {candidate_profile_data} placeholder'),
+    'is_active': fields.Boolean(description='Is this template active'),
+    'version_number': fields.Integer(readonly=True, description='Version number'),
+    'created_by': fields.String(description='Created by user'),
+    'created_date': fields.DateTime(readonly=True, description='Creation date'),
+    'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
 })
 
-@candidate_profile_ns.route('/ai-summary/prompt-template')
-class PromptTemplateManager(Resource):
-    @candidate_profile_ns.doc('get_current_prompt_template')
+prompt_template_create_model = candidate_profile_ns.model('PromptTemplateCreate', {
+    'name': fields.String(required=True, description='Template name'),
+    'description': fields.String(description='Template description'),
+    'template_content': fields.String(required=True, description='Prompt template content'),
+    'created_by': fields.String(description='Created by user'),
+    'base_template_id': fields.Integer(description='Base template ID for versioning')
+})
+
+prompt_template_update_model = candidate_profile_ns.model('PromptTemplateUpdate', {
+    'name': fields.String(description='Template name'),
+    'description': fields.String(description='Template description'),
+    'template_content': fields.String(description='Prompt template content'),
+    'created_by': fields.String(description='Modified by user')
+})
+
+@candidate_profile_ns.route('/ai-summary/prompt-templates')
+class PromptTemplateList(Resource):
+    @candidate_profile_ns.doc('list_prompt_templates')
+    @candidate_profile_ns.param('active_only', 'Filter active templates only (true/false)', type='string', required=False)
+    @candidate_profile_ns.param('page', 'Page number for pagination', type='int', default=1)
+    @candidate_profile_ns.param('per_page', 'Items per page', type='int', default=20)
     def get(self):
-        """Get the current AI summary prompt template"""
+        """Get all AI prompt templates with pagination"""
         try:
-            current_template = ai_summary_service.prompt_template.template
+            # Handle active_only parameter - only filter if explicitly provided
+            active_only_param = request.args.get('active_only')
+            page = int(request.args.get('page', 1))
+            per_page = min(int(request.args.get('per_page', 20)), 100)
+            
+            query = AiPromptTemplate.query
+            
+            # Only apply filter if active_only parameter is explicitly provided
+            if active_only_param is not None:
+                if active_only_param.lower() in ['true', '1', 'yes']:
+                    query = query.filter_by(is_active=True)
+                elif active_only_param.lower() in ['false', '0', 'no']:
+                    query = query.filter_by(is_active=False)
+                # If parameter provided but not recognized, ignore filter (show all)
+            
+            query = query.order_by(AiPromptTemplate.version_number.desc(), AiPromptTemplate.created_date.desc())
+            
+            paginated = query.paginate(
+                page=page, per_page=per_page, error_out=False
+            )
+            
             return {
-                'template': current_template,
-                'description': 'Current prompt template for AI summary generation',
-                'variables': ['candidate_data'],
-                'instructions': 'Use {candidate_data} as placeholder for candidate profile data'
+                'templates': [template.to_dict() for template in paginated.items],
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': paginated.total,
+                    'pages': paginated.pages,
+                    'has_next': paginated.has_next,
+                    'has_prev': paginated.has_prev
+                },
+                'filters': {
+                    'active_only': active_only_param
+                }
             }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+    
+    @candidate_profile_ns.doc('create_prompt_template')
+    @candidate_profile_ns.expect(prompt_template_create_model)
+    def post(self):
+        """Create a new AI prompt template"""
+        try:
+            data = request.get_json()
+            
+            # Validate required fields
+            name = data.get('name', '').strip()
+            template_content = data.get('template_content', '').strip()
+            
+            if not name:
+                candidate_profile_ns.abort(400, 'Template name is required')
+            
+            if not template_content:
+                candidate_profile_ns.abort(400, 'Template content is required')
+            
+            if '{candidate_profile_data}' not in template_content:
+                candidate_profile_ns.abort(400, 'Template must contain {candidate_profile_data} placeholder')
+            
+            # Create version number
+            base_template_id = data.get('base_template_id')
+            version_number = AiPromptTemplate.create_new_version(base_template_id)
+            
+            # Create new template
+            new_template = AiPromptTemplate(
+                name=name,
+                description=data.get('description', ''),
+                template_content=template_content,
+                version_number=version_number,
+                created_by=data.get('created_by', 'user'),
+                is_active=False  # New templates are not active by default
+            )
+            
+            db.session.add(new_template)
+            db.session.commit()
+            
+            return {
+                'success': True,
+                'message': 'Prompt template created successfully',
+                'template': new_template.to_dict()
+            }, 201
+            
+        except Exception as e:
+            db.session.rollback()
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/prompt-templates/<int:template_id>')
+class PromptTemplate(Resource):
+    @candidate_profile_ns.doc('get_prompt_template')
+    @candidate_profile_ns.marshal_with(prompt_template_model)
+    def get(self, template_id):
+        """Get a specific prompt template by ID"""
+        try:
+            template = AiPromptTemplate.query.get_or_404(template_id)
+            return template.to_dict(), 200
         except Exception as e:
             candidate_profile_ns.abort(500, str(e))
     
     @candidate_profile_ns.doc('update_prompt_template')
-    @candidate_profile_ns.expect(prompt_template_model)
-    def put(self):
-        """Update the AI summary prompt template"""
+    @candidate_profile_ns.expect(prompt_template_update_model)
+    def put(self, template_id):
+        """Update a specific prompt template"""
         try:
+            template = AiPromptTemplate.query.get_or_404(template_id)
             data = request.get_json()
-            new_template = data.get('template', '').strip()
             
-            if not new_template:
-                candidate_profile_ns.abort(400, 'Template is required')
+            # Update fields if provided
+            if 'name' in data:
+                template.name = data['name'].strip()
             
-            if '{candidate_data}' not in new_template:
-                candidate_profile_ns.abort(400, 'Template must contain {candidate_data} placeholder')
+            if 'description' in data:
+                template.description = data['description']
             
-            # Update the prompt template
-            ai_summary_service.update_prompt_template(new_template)
+            if 'template_content' in data:
+                template_content = data['template_content'].strip()
+                if not template_content:
+                    candidate_profile_ns.abort(400, 'Template content cannot be empty')
+                
+                if '{candidate_profile_data}' not in template_content:
+                    candidate_profile_ns.abort(400, 'Template must contain {candidate_profile_data} placeholder')
+                
+                template.template_content = template_content
+            
+            if 'created_by' in data:
+                template.created_by = data['created_by']
+            
+            template.last_modified_date = datetime.utcnow()
+            
+            db.session.commit()
             
             return {
                 'success': True,
                 'message': 'Prompt template updated successfully',
-                'template': new_template
+                'template': template.to_dict()
+            }, 200
+            
+        except Exception as e:
+            db.session.rollback()
+            candidate_profile_ns.abort(500, str(e))
+    
+    @candidate_profile_ns.doc('delete_prompt_template')
+    def delete(self, template_id):
+        """Hard delete a prompt template"""
+        try:
+            template = AiPromptTemplate.query.get_or_404(template_id)
+            
+            if template.is_active:
+                candidate_profile_ns.abort(400, 'Cannot delete the active template. Please activate another template first.')
+            
+            db.session.delete(template)
+            db.session.commit()
+            
+            return {
+                'success': True,
+                'message': 'Prompt template deleted successfully'
+            }, 200
+            
+        except Exception as e:
+            db.session.rollback()
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/prompt-templates/<int:template_id>/activate')
+class PromptTemplateActivate(Resource):
+    @candidate_profile_ns.doc('activate_prompt_template')
+    def post(self, template_id):
+        """Activate a specific prompt template (deactivates all others)"""
+        try:
+            template = AiPromptTemplate.query.get_or_404(template_id)
+            
+            # Activate this template (method handles deactivating others)
+            template.activate()
+            
+            return {
+                'success': True,
+                'message': f'Template "{template.name}" activated successfully',
+                'template': template.to_dict()
+            }, 200
+            
+        except Exception as e:
+            db.session.rollback()
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/prompt-template')
+class PromptTemplateManager(Resource):
+    @candidate_profile_ns.doc('get_active_prompt_template')
+    def get(self):
+        """Get the currently active AI summary prompt template"""
+        try:
+            active_template = AiPromptTemplate.get_active_template()
+            
+            if not active_template:
+                candidate_profile_ns.abort(404, 'No active prompt template found')
+            
+            return {
+                'template': active_template.to_dict(),
+                'variables': ['candidate_profile_data'],
+                'instructions': 'Use {candidate_profile_data} as placeholder for candidate profile data'
             }, 200
             
         except Exception as e:

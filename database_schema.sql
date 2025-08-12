@@ -4,6 +4,24 @@
 -- Enable vector extension for embedding storage (pgvector)
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Create AI recruitment prompt templates table for managing different versions of AI prompts
+CREATE TABLE ai_recruitment_prompt_templates (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    template_content TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT false,
+    version_number INTEGER NOT NULL DEFAULT 1,
+    created_by VARCHAR(100), -- User who created this template
+    created_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_modified_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create unique partial index to ensure only one active template
+CREATE UNIQUE INDEX idx_unique_active_template 
+ON ai_recruitment_prompt_templates (is_active) 
+WHERE is_active = true;
+
 -- Create the main candidate master profile table
 CREATE TABLE candidate_master_profile (
     id SERIAL PRIMARY KEY,
@@ -189,4 +207,38 @@ CREATE TRIGGER update_candidate_resume_last_modified_date
 
 CREATE TRIGGER update_ai_recruitment_com_code_last_modified_date
     BEFORE UPDATE ON ai_recruitment_com_code
-    FOR EACH ROW EXECUTE FUNCTION update_last_modified_date(); 
+    FOR EACH ROW EXECUTE FUNCTION update_last_modified_date();
+
+CREATE TRIGGER update_ai_recruitment_prompt_templates_last_modified_date
+    BEFORE UPDATE ON ai_recruitment_prompt_templates
+    FOR EACH ROW EXECUTE FUNCTION update_last_modified_date();
+
+-- Insert default AI recruitment prompt template
+INSERT INTO ai_recruitment_prompt_templates (name, description, template_content, is_active, version_number, created_by) 
+VALUES (
+    'Default AI Summary Template',
+    'Default template for generating candidate AI summaries',
+    'Please analyze the following candidate profile data and create a professional summary within 200 words. Follow this format:
+
+"{years_of_experience} years of experience in {primary_position} in {domain_field}. Graduated from {university_name}. 
+
+Key Strengths: {key_skills_and_strengths}
+
+Looking for: {career_objectives_and_interests}
+
+Salary Expectation: {salary_range_if_available}
+
+Work Status: {availability_and_work_preferences}
+
+Notice Period: {availability_weeks_if_provided}
+
+Additional Notes: {any_other_relevant_information}"
+
+Candidate Data:
+{candidate_profile_data}
+
+Please provide a concise, professional summary that highlights the candidate''s key qualifications, experience, and career objectives.',
+    true,
+    1,
+    'system'
+); 

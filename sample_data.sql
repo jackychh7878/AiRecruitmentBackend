@@ -1,6 +1,39 @@
 -- Sample data for AI Recruitment Backend
 -- Run this after creating the main schema
 
+-- Insert default AI recruitment prompt template
+INSERT INTO ai_recruitment_prompt_templates (name, description, template_content, is_active, version_number, created_by) 
+VALUES (
+    'Default AI Summary Template',
+    'Default template for generating candidate AI summaries',
+    'You are an AI assistant specializing in creating professional candidate profile summaries for recruitment purposes.
+
+Given the candidate profile data below, create a concise professional summary in exactly 200 words or less following this format:
+
+"[X] years of experience in [position] in [domain field].
+Graduated from [university/education].
+Strengths: [key skills and strengths]
+Looking for: [salary expectation and work preferences]
+Open to work status: [availability and notice period]
+Other remarks: [additional relevant information]"
+
+Candidate Profile Data:
+{candidate_profile_data}
+
+Please ensure the summary is:
+- Professional and concise
+- Highlights key qualifications and experience
+- Includes relevant education background
+- Mentions salary expectations if available
+- Notes work availability and preferences
+- Under 200 words total
+
+Summary:',
+    true,
+    1,
+    'system'
+);
+
 -- Insert comprehensive communication codes for AI Recruitment system
 
 -- Language categories

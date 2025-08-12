@@ -260,4 +260,55 @@ class AiRecruitmentComCode(db.Model):
             'is_active': self.is_active,
             'created_date': self.created_date.isoformat() if self.created_date else None,
             'last_modified_date': self.last_modified_date.isoformat() if self.last_modified_date else None
-        } 
+        }
+
+class AiPromptTemplate(db.Model):
+    __tablename__ = 'ai_recruitment_prompt_templates'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text)
+    template_content = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, default=False)
+    version_number = db.Column(db.Integer, default=1, nullable=False)
+    created_by = db.Column(db.String(100))
+    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    last_modified_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'template_content': self.template_content,
+            'is_active': self.is_active,
+            'version_number': self.version_number,
+            'created_by': self.created_by,
+            'created_date': self.created_date.isoformat() if self.created_date else None,
+            'last_modified_date': self.last_modified_date.isoformat() if self.last_modified_date else None
+        }
+    
+    @staticmethod
+    def get_active_template():
+        """Get the currently active prompt template"""
+        return AiPromptTemplate.query.filter_by(is_active=True).first()
+    
+    def activate(self):
+        """Activate this template and deactivate all others"""
+        # Deactivate all other templates
+        AiPromptTemplate.query.update({'is_active': False})
+        # Activate this template
+        self.is_active = True
+        db.session.commit()
+    
+    @staticmethod
+    def create_new_version(base_template_id=None):
+        """Create a new version number based on existing templates"""
+        if base_template_id:
+            base_template = AiPromptTemplate.query.get(base_template_id)
+            if base_template:
+                return base_template.version_number + 1
+        
+        # Get the highest version number and add 1
+        max_version = db.session.query(db.func.max(AiPromptTemplate.version_number)).scalar()
+        return (max_version or 0) + 1 
