@@ -11,6 +11,8 @@ import json
 from werkzeug.datastructures import FileStorage
 from services.resume_parser import resume_parser
 from services.ai_summary_service import ai_summary_service
+from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
+from flask import current_app
 
 # Create namespace
 candidate_profile_ns = Namespace('candidates', description='Candidate profile operations')
@@ -633,6 +635,35 @@ prompt_template_update_model = candidate_profile_ns.model('PromptTemplateUpdate'
     'created_by': fields.String(description='Modified by user')
 })
 
+# Bulk regeneration models
+bulk_regeneration_request_model = candidate_profile_ns.model('BulkRegenerationRequest', {
+    'prompt_template_id': fields.Integer(description='Template ID to activate (optional)', required=False),
+    'created_by': fields.String(description='User initiating the job', default='user')
+})
+
+bulk_regeneration_response_model = candidate_profile_ns.model('BulkRegenerationResponse', {
+    'success': fields.Boolean(description='Whether job was started successfully'),
+    'job_id': fields.String(description='Unique job identifier for tracking'),
+    'message': fields.String(description='Status message'),
+    'warning': fields.String(description='Important warnings about the process')
+})
+
+job_status_model = candidate_profile_ns.model('JobStatus', {
+    'job_id': fields.String(description='Job identifier'),
+    'status': fields.String(description='Current job status'),
+    'started_at': fields.String(description='Job start time'),
+    'completed_at': fields.String(description='Job completion time'),
+    'created_by': fields.String(description='User who initiated the job'),
+    'prompt_template_id': fields.Integer(description='Template ID used'),
+    'total_profiles': fields.Integer(description='Total profiles to process'),
+    'processed_profiles': fields.Integer(description='Profiles processed so far'),
+    'successful_updates': fields.Integer(description='Successful updates'),
+    'failed_updates': fields.Integer(description='Failed updates'),
+    'current_profile_id': fields.Integer(description='Currently processing profile ID'),
+    'estimated_completion': fields.String(description='Estimated completion time'),
+    'errors': fields.List(fields.String, description='List of errors encountered')
+})
+
 @candidate_profile_ns.route('/ai-summary/prompt-templates')
 class PromptTemplateList(Resource):
     @candidate_profile_ns.doc('list_prompt_templates')
@@ -839,6 +870,181 @@ class PromptTemplateManager(Resource):
                 'template': active_template.to_dict(),
                 'variables': ['candidate_profile_data'],
                 'instructions': 'Use {candidate_profile_data} as placeholder for candidate profile data'
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/bulk-regenerate')
+class BulkRegenerateAISummaries(Resource):
+    @candidate_profile_ns.doc('start_bulk_regeneration')
+    @candidate_profile_ns.expect(bulk_regeneration_request_model)
+    @candidate_profile_ns.marshal_with(bulk_regeneration_response_model)
+    def post(self):
+        """
+        ⚠️ CAUTION: Regenerate AI summaries for ALL candidate profiles
+        
+        This endpoint triggers a background job that will:
+        1. Optionally activate a specific prompt template
+        2. Loop through ALL active candidate profiles
+        3. Regenerate AI summary and embedding for each profile
+        4. Update the database with new AI-generated content
+        
+        ⚠️ WARNINGS:
+        - This is a heavy operation that may take hours to complete
+        - It will consume significant Azure OpenAI credits/tokens
+        - Rate limited to max 5 concurrent processes (configurable)
+        - Cannot be easily stopped once started
+        - All existing AI summaries will be overwritten
+        
+        💡 Use this when:
+        - You've updated the prompt template significantly
+        - You want all profiles to use the new template format
+        - You're migrating or improving AI summary quality
+        
+        📊 The job runs in background with progress tracking
+        """
+        try:
+            data = request.get_json() or {}
+            
+            prompt_template_id = data.get('prompt_template_id')
+            created_by = data.get('created_by', 'user')
+            
+            # Validate template ID if provided
+            if prompt_template_id:
+                template = AiPromptTemplate.query.get(prompt_template_id)
+                if not template:
+                    candidate_profile_ns.abort(404, f'Template with ID {prompt_template_id} not found')
+            
+            # Get count of profiles that will be processed
+            profile_count = CandidateMasterProfile.query.filter_by(is_active=True).count()
+            
+            if profile_count == 0:
+                return {
+                    'success': False,
+                    'job_id': None,
+                    'message': 'No active candidate profiles found to process',
+                    'warning': None
+                }, 200
+            
+            # Set Flask app context for the service
+            bulk_ai_regeneration_service.set_app(current_app._get_current_object())
+            
+            # Start the bulk regeneration job
+            job_id = bulk_ai_regeneration_service.start_bulk_regeneration(
+                prompt_template_id=prompt_template_id,
+                created_by=created_by
+            )
+            
+            warning_message = (
+                f"⚠️ This job will process {profile_count} candidate profiles. "
+                f"It may take several hours and consume significant AI credits. "
+                f"Monitor progress using job ID: {job_id}"
+            )
+            
+            return {
+                'success': True,
+                'job_id': job_id,
+                'message': f'Bulk regeneration job started successfully. Processing {profile_count} profiles.',
+                'warning': warning_message
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/bulk-regenerate/jobs')
+class BulkRegenerationJobs(Resource):
+    @candidate_profile_ns.doc('list_bulk_regeneration_jobs')
+    def get(self):
+        """Get status of all bulk regeneration jobs"""
+        try:
+            jobs = bulk_ai_regeneration_service.get_all_active_jobs()
+            
+            return {
+                'jobs': list(jobs.values()),
+                'total_jobs': len(jobs)
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/bulk-regenerate/jobs/<string:job_id>')
+class BulkRegenerationJobStatus(Resource):
+    @candidate_profile_ns.doc('get_bulk_regeneration_job_status')
+    @candidate_profile_ns.marshal_with(job_status_model)
+    def get(self, job_id):
+        """Get detailed status of a specific bulk regeneration job"""
+        try:
+            job_status = bulk_ai_regeneration_service.get_job_status(job_id)
+            
+            if not job_status:
+                candidate_profile_ns.abort(404, f'Job with ID {job_id} not found')
+            
+            return job_status, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+    
+    @candidate_profile_ns.doc('cancel_bulk_regeneration_job')
+    def delete(self, job_id):
+        """Cancel a running bulk regeneration job (if possible)"""
+        try:
+            success = bulk_ai_regeneration_service.cancel_job(job_id)
+            
+            if success:
+                return {
+                    'success': True,
+                    'message': f'Job {job_id} has been marked for cancellation'
+                }, 200
+            else:
+                return {
+                    'success': False,
+                    'message': f'Job {job_id} could not be cancelled (may not exist or already completed)'
+                }, 400
+                
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/ai-summary/bulk-regenerate/stats')
+class BulkRegenerationStats(Resource):
+    @candidate_profile_ns.doc('get_bulk_regeneration_stats')
+    def get(self):
+        """Get statistics about candidate profiles and bulk regeneration capacity"""
+        try:
+            # Get profile counts
+            total_profiles = CandidateMasterProfile.query.count()
+            active_profiles = CandidateMasterProfile.query.filter_by(is_active=True).count()
+            profiles_with_ai_summary = CandidateMasterProfile.query.filter(
+                CandidateMasterProfile.ai_short_summary.isnot(None)
+            ).count()
+            
+            # Get current rate limiting settings
+            max_workers = bulk_ai_regeneration_service.max_concurrent_workers
+            rate_limit_delay = bulk_ai_regeneration_service.rate_limit_delay
+            
+            # Calculate estimated processing time
+            estimated_time_per_profile = 10 + rate_limit_delay  # Rough estimate in seconds
+            estimated_total_time_hours = (active_profiles * estimated_time_per_profile) / 3600
+            
+            return {
+                'profile_statistics': {
+                    'total_profiles': total_profiles,
+                    'active_profiles': active_profiles,
+                    'profiles_with_ai_summary': profiles_with_ai_summary,
+                    'profiles_without_ai_summary': active_profiles - profiles_with_ai_summary
+                },
+                'processing_capacity': {
+                    'max_concurrent_workers': max_workers,
+                    'rate_limit_delay_seconds': rate_limit_delay,
+                    'estimated_time_per_profile_seconds': estimated_time_per_profile,
+                    'estimated_total_processing_hours': round(estimated_total_time_hours, 2)
+                },
+                'recommendations': [
+                    f"Bulk regeneration will process {active_profiles} active profiles",
+                    f"Estimated completion time: {round(estimated_total_time_hours, 1)} hours",
+                    "Consider running during off-peak hours to minimize impact",
+                    "Monitor Azure OpenAI usage and costs during processing"
+                ]
             }, 200
             
         except Exception as e:

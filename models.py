@@ -53,6 +53,7 @@ class CandidateMasterProfile(db.Model):
             'is_active': self.is_active,
             'remarks': self.remarks,
             'ai_short_summary': self.ai_short_summary,
+            'embedding_vector': self.embedding_vector,
             'metadata_json': self.metadata_json,
             'created_date': self.created_date.isoformat() if self.created_date else None,
             'last_modified_date': self.last_modified_date.isoformat() if self.last_modified_date else None

@@ -35,6 +35,11 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Initialize SQLAlchemy with app
 db.init_app(app)
 
+# Initialize bulk AI regeneration service with app context
+from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
+with app.app_context():
+    bulk_ai_regeneration_service.set_app(app)
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
