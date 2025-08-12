@@ -1,9 +1,11 @@
-from flask import request
+from flask import request, Response
 from flask_restx import Namespace, Resource, fields
 from database import db
 from models import CandidateResume, CandidateMasterProfile
 from datetime import datetime
 from werkzeug.datastructures import FileStorage
+import urllib.parse
+import logging
 
 resume_ns = Namespace('resumes', description='Resume operations')
 
@@ -34,6 +36,35 @@ resume_list_model = resume_ns.model('ResumeList', {
     'pages': fields.Integer(description='Total number of pages'),
     'current_page': fields.Integer(description='Current page number'),
     'per_page': fields.Integer(description='Items per page')
+})
+
+# Additional models for responses
+resume_info_model = resume_ns.model('ResumeInfo', {
+    'resume_id': fields.Integer(description='Resume ID'),
+    'file_name': fields.String(description='File name'),
+    'file_size': fields.Integer(description='File size in bytes'),
+    'content_type': fields.String(description='MIME type'),
+    'upload_date': fields.String(description='Upload date'),
+    'download_url': fields.String(description='Download endpoint URL')
+})
+
+delete_response_model = resume_ns.model('DeleteResponse', {
+    'message': fields.String(description='Success message')
+})
+
+resume_stats_model = resume_ns.model('ResumeStats', {
+    'total_resumes': fields.Integer(description='Total number of resumes'),
+    'active_resumes': fields.Integer(description='Number of active resumes'),
+    'inactive_resumes': fields.Integer(description='Number of inactive resumes'),
+    'total_file_size_bytes': fields.Integer(description='Total file size in bytes'),
+    'total_file_size_mb': fields.Float(description='Total file size in MB'),
+    'file_extensions': fields.List(fields.Raw, description='File count by extension')
+})
+
+candidate_resume_list_model = resume_ns.model('CandidateResumeList', {
+    'candidate_id': fields.Integer(description='Candidate ID'),
+    'resumes': fields.List(fields.Nested(resume_model), description='List of resumes'),
+    'total': fields.Integer(description='Total number of resumes')
 })
 
 @resume_ns.route('/')
@@ -97,12 +128,13 @@ class ResumeList(Resource):
             }, 200
             
         except Exception as e:
+            logging.error(f"Failed to get resume list: {str(e)}")
             resume_ns.abort(500, str(e))
 
     @resume_ns.doc('create_resume')
     @resume_ns.expect(resume_input_model)
     def post(self):
-        """Create a new resume record with PDF data"""
+        """Create a new resume record with base64 encoded PDF data"""
         try:
             data = request.get_json()
             
@@ -181,7 +213,7 @@ class ResumeUpload(Resource):
     @resume_ns.doc('upload_resume_pdf')
     @resume_ns.expect(upload_parser)
     def post(self):
-        """Upload a PDF resume file directly"""
+        """Upload a PDF resume file directly using multipart form data"""
         try:
             args = upload_parser.parse_args()
             pdf_file = args['pdf_file']
@@ -233,6 +265,7 @@ class Resume(Resource):
             return resume_record.to_dict(), 200
             
         except Exception as e:
+            logging.error(f"Failed to get resume {resume_id}: {str(e)}")
             resume_ns.abort(500, str(e))
 
     @resume_ns.doc('update_resume')
@@ -294,6 +327,7 @@ class Resume(Resource):
             
         except Exception as e:
             db.session.rollback()
+            logging.error(f"Failed to update resume {resume_id}: {str(e)}")
             resume_ns.abort(500, str(e))
 
     @resume_ns.doc('delete_resume')
@@ -311,6 +345,7 @@ class Resume(Resource):
             
         except Exception as e:
             db.session.rollback()
+            logging.error(f"Failed to delete resume {resume_id}: {str(e)}")
             resume_ns.abort(500, str(e))
 
 @resume_ns.route('/<int:resume_id>/hard-delete')
@@ -329,6 +364,7 @@ class ResumeHardDelete(Resource):
             
         except Exception as e:
             db.session.rollback()
+            logging.error(f"Failed to hard delete resume {resume_id}: {str(e)}")
             resume_ns.abort(500, str(e))
 
 @resume_ns.route('/candidate/<int:candidate_id>')
@@ -365,6 +401,7 @@ class CandidateResumeList(Resource):
             }, 200
             
         except Exception as e:
+            logging.error(f"Failed to get candidate resumes for candidate {candidate_id}: {str(e)}")
             resume_ns.abort(500, str(e))
 
 @resume_ns.route('/<int:resume_id>/download')
@@ -372,10 +409,8 @@ class CandidateResumeList(Resource):
 class ResumeDownload(Resource):
     @resume_ns.doc('download_resume_pdf')
     def get(self, resume_id):
-        """Download the PDF file for a specific resume"""
+        """Returns the PDF file as binary data with appropriate headers."""
         try:
-            from flask import Response
-            
             resume_record = CandidateResume.query.get_or_404(resume_id)
             
             if not resume_record.is_active:
@@ -384,19 +419,27 @@ class ResumeDownload(Resource):
             if not resume_record.pdf_data:
                 resume_ns.abort(404, 'PDF data not found')
             
-            # Return PDF as binary response
+            # Handle filename encoding for special characters
+            safe_filename = urllib.parse.quote(resume_record.file_name)
+            
+            # Return PDF as binary response with proper headers
             response = Response(
                 resume_record.pdf_data,
                 mimetype=resume_record.content_type or 'application/pdf',
                 headers={
-                    'Content-Disposition': f'attachment; filename="{resume_record.file_name}"',
-                    'Content-Length': str(resume_record.file_size)
+                    'Content-Type': resume_record.content_type or 'application/pdf',
+                    'Content-Disposition': f'attachment; filename="{safe_filename}"; filename*=UTF-8\'\'{safe_filename}',
+                    'Content-Length': str(resume_record.file_size),
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
                 }
             )
             
             return response
             
         except Exception as e:
+            logging.error(f"PDF download failed for resume {resume_id}: {str(e)}")
             resume_ns.abort(500, f'Download failed: {str(e)}')
 
 @resume_ns.route('/<int:resume_id>/info')
@@ -417,17 +460,18 @@ class ResumeInfo(Resource):
                 'file_size': resume_record.file_size,
                 'content_type': resume_record.content_type,
                 'upload_date': resume_record.upload_date.isoformat() if resume_record.upload_date else None,
-                'download_url': f'/resumes/{resume_id}/download'
+                'download_url': f'/api/resumes/{resume_id}/download'
             }, 200
             
         except Exception as e:
+            logging.error(f"Failed to get resume info for resume {resume_id}: {str(e)}")
             resume_ns.abort(500, str(e))
 
 @resume_ns.route('/stats')
 class ResumeStats(Resource):
     @resume_ns.doc('get_resume_stats')
     def get(self):
-        """Get resume statistics"""
+        """Get resume statistics and file information"""
         try:
             total_resumes = CandidateResume.query.count()
             active_resumes = CandidateResume.query.filter_by(is_active=True).count()
@@ -465,4 +509,5 @@ class ResumeStats(Resource):
             }, 200
             
         except Exception as e:
+            logging.error(f"Failed to get resume stats: {str(e)}")
             resume_ns.abort(500, str(e)) 
