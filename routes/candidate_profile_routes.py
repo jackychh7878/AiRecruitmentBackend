@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 from werkzeug.datastructures import FileStorage
 from services.resume_parser import resume_parser
+from services.ai_summary_service import ai_summary_service
 
 # Create namespace
 candidate_profile_ns = Namespace('candidates', description='Candidate profile operations')
@@ -359,6 +360,154 @@ class Candidate(Resource):
             db.session.rollback()
             candidate_profile_ns.abort(500, str(e))
 
+    @candidate_profile_ns.doc('finalize_candidate_profile')
+    @candidate_profile_ns.param('generate_ai_summary', 'Generate AI summary and embedding', type=bool, default=True)
+    def patch(self, candidate_id):
+        """
+        Finalize candidate profile update with AI summary generation and embedding
+        
+        This endpoint should be called after all profile components have been updated.
+        It will:
+        1. Save the master profile updates to database
+        2. Fetch the latest candidate profile with all active relationships
+        3. Generate an AI summary using LangChain
+        4. Create an embedding vector from the AI summary
+        5. Update the profile with AI summary and embedding
+        """
+        try:
+            import asyncio
+            
+            candidate = CandidateMasterProfile.query.get_or_404(candidate_id)
+            
+            # Handle different content types more gracefully
+            data = {}
+            if request.is_json:
+                data = request.get_json() or {}
+            elif request.form:
+                # Handle form data if needed
+                data = request.form.to_dict()
+            
+            print(f"Request Content-Type: {request.content_type}")
+            print(f"Request data: {data}")
+            print(f"Request is_json: {request.is_json}")
+            
+            generate_ai_summary = request.args.get('generate_ai_summary', 'true').lower() == 'true'
+            
+            # First, update the master profile if data is provided
+            if data:
+                # Check if email is being changed and if new email already exists
+                if 'email' in data and data['email'] != candidate.email:
+                    existing_candidate = CandidateMasterProfile.query.filter_by(email=data['email']).first()
+                    if existing_candidate:
+                        candidate_profile_ns.abort(400, 'Email already exists')
+                
+                # Update fields (excluding AI fields which will be generated)
+                updatable_fields = [
+                    'first_name', 'last_name', 'email', 'location', 'phone_number',
+                    'personal_summary', 'availability_weeks', 'preferred_work_types',
+                    'right_to_work', 'salary_expectation', 'classification_of_interest',
+                    'sub_classification_of_interest', 'is_active', 'remarks', 'metadata_json'
+                ]
+                
+                for field in updatable_fields:
+                    if field in data:
+                        setattr(candidate, field, data[field])
+                
+                candidate.last_modified_date = datetime.utcnow()
+                db.session.commit()
+            
+            # Fetch the complete candidate profile with all active relationships
+            candidate_with_relationships = candidate.to_dict(include_relationships=True)
+            
+            # Filter out inactive relationships
+            for relationship_key in ['career_history', 'skills', 'education', 'licenses_certifications', 'languages', 'resumes']:
+                if relationship_key in candidate_with_relationships:
+                    candidate_with_relationships[relationship_key] = [
+                        item for item in candidate_with_relationships[relationship_key] 
+                        if item.get('is_active', True)
+                    ]
+            
+            # Generate AI summary and embedding if requested
+            ai_processing_result = None
+            if generate_ai_summary:
+                try:
+                    print(f"Starting AI processing for candidate {candidate_id}")
+                    
+                    # Check if AI service is available
+                    if not ai_summary_service:
+                        raise Exception("AI summary service not initialized")
+                    
+                    # Run the async AI processing in a new event loop
+                    try:
+                        # Always create a new event loop for consistency
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            ai_processing_result = loop.run_until_complete(
+                                ai_summary_service.process_candidate_profile(candidate_with_relationships)
+                            )
+                        finally:
+                            loop.close()
+                            asyncio.set_event_loop(None)  # Clean up
+                    except Exception as async_error:
+                        print(f"Async processing error: {str(async_error)}")
+                        raise async_error
+                    
+                    print(f"AI processing result: {ai_processing_result}")
+                    
+                    if ai_processing_result and ai_processing_result.get('processing_success'):
+                        # Update the candidate with AI summary and embedding
+                        print(f"Updating candidate with AI summary...")
+                        candidate.ai_short_summary = ai_processing_result['ai_summary']
+                        candidate.embedding_vector = ai_processing_result['embedding_vector']
+                        candidate.last_modified_date = datetime.utcnow()
+                        db.session.commit()
+                        print(f"AI summary and embedding saved successfully")
+                        
+                except Exception as ai_error:
+                    import traceback
+                    ai_traceback = traceback.format_exc()
+                    print(f"AI processing error: {str(ai_error)}")
+                    print(f"AI error traceback: {ai_traceback}")
+                    ai_processing_result = {
+                        'processing_success': False,
+                        'error': str(ai_error),
+                        'traceback': ai_traceback
+                    }
+            
+            # Get the final updated candidate profile
+            final_candidate = candidate.to_dict(include_relationships=True)
+            
+            # Prepare response
+            response_data = {
+                'success': True,
+                'message': 'Candidate profile finalized successfully',
+                'candidate': final_candidate,
+                'ai_processing': {
+                    'enabled': generate_ai_summary,
+                    'success': ai_processing_result.get('processing_success', False) if ai_processing_result else False
+                }
+            }
+            
+            if ai_processing_result:
+                if ai_processing_result.get('processing_success'):
+                    response_data['ai_processing']['summary_generated'] = True
+                    response_data['ai_processing']['embedding_created'] = True
+                    response_data['ai_processing']['ai_summary'] = ai_processing_result.get('ai_summary')
+                else:
+                    response_data['ai_processing']['error'] = ai_processing_result.get('error')
+            
+            return response_data, 200
+            
+        except Exception as e:
+            db.session.rollback()
+            # Import traceback for better error reporting
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"Profile finalization error: {str(e)}")
+            print(f"Full traceback: {error_traceback}")
+            candidate_profile_ns.abort(500, f'Profile finalization failed: {str(e)}. Check logs for details.')
+
 @candidate_profile_ns.route('/<int:candidate_id>/hard-delete')
 @candidate_profile_ns.param('candidate_id', 'Candidate ID')
 class CandidateHardDelete(Resource):
@@ -451,6 +600,54 @@ class CandidateStats(Resource):
                     {'classification': stat[0], 'count': stat[1]} 
                     for stat in classification_stats if stat[0]
                 ]
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+# Prompt template management
+prompt_template_model = candidate_profile_ns.model('PromptTemplate', {
+    'template': fields.String(required=True, description='Prompt template with {candidate_data} placeholder'),
+    'description': fields.String(description='Description of the template purpose')
+})
+
+@candidate_profile_ns.route('/ai-summary/prompt-template')
+class PromptTemplateManager(Resource):
+    @candidate_profile_ns.doc('get_current_prompt_template')
+    def get(self):
+        """Get the current AI summary prompt template"""
+        try:
+            current_template = ai_summary_service.prompt_template.template
+            return {
+                'template': current_template,
+                'description': 'Current prompt template for AI summary generation',
+                'variables': ['candidate_data'],
+                'instructions': 'Use {candidate_data} as placeholder for candidate profile data'
+            }, 200
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+    
+    @candidate_profile_ns.doc('update_prompt_template')
+    @candidate_profile_ns.expect(prompt_template_model)
+    def put(self):
+        """Update the AI summary prompt template"""
+        try:
+            data = request.get_json()
+            new_template = data.get('template', '').strip()
+            
+            if not new_template:
+                candidate_profile_ns.abort(400, 'Template is required')
+            
+            if '{candidate_data}' not in new_template:
+                candidate_profile_ns.abort(400, 'Template must contain {candidate_data} placeholder')
+            
+            # Update the prompt template
+            ai_summary_service.update_prompt_template(new_template)
+            
+            return {
+                'success': True,
+                'message': 'Prompt template updated successfully',
+                'template': new_template
             }, 200
             
         except Exception as e:

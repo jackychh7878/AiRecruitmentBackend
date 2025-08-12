@@ -22,7 +22,7 @@ CREATE TABLE candidate_master_profile (
     is_active BOOLEAN DEFAULT true,
     remarks TEXT,
     ai_short_summary TEXT,
-    embedding_vector vector(1536), -- Vector embedding for AI/ML purposes
+    embedding_vector vector(1536), -- Vector embedding for AI/ML purposes using pgvector
     metadata_json JSONB,
     created_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_modified_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
