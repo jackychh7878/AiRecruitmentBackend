@@ -13,7 +13,57 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend integration
+
+# Configure Flask to handle trailing slashes consistently
+app.url_map.strict_slashes = False  # Allow both /api/candidates and /api/candidates/
+
+# Configure CORS properly to handle preflight requests
+# Allow multiple origins for development and production
+allowed_origins = [
+    "http://localhost:3000",  # React development server
+    "http://127.0.0.1:3000",  # Alternative localhost
+    "http://localhost:3001",  # Alternative React port
+]
+
+# Add production origins from environment if set
+if os.getenv('FRONTEND_URL'):
+    allowed_origins.append(os.getenv('FRONTEND_URL'))
+
+# Comprehensive header list to handle all frontend requests
+cors_headers = [
+    "Accept",
+    "Accept-Encoding", 
+    "Accept-Language", 
+    "Cache-Control",
+    "Connection",
+    "Content-Language",
+    "Content-Type",
+    "Authorization",
+    "Origin",
+    "Pragma",
+    "Referer",
+    "User-Agent",
+    "X-Requested-With",
+    "X-CSRFToken",
+    "DNT",
+    "Keep-Alive",
+    "X-CustomHeader"
+]
+
+# Add Chrome security headers
+chrome_headers = [
+    "Sec-CH-UA", "Sec-CH-UA-Mobile", "Sec-CH-UA-Platform",
+    "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"
+]
+cors_headers.extend(chrome_headers)
+
+CORS(app, 
+     origins=allowed_origins,
+     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+     allow_headers=cors_headers,
+     supports_credentials=True,
+     expose_headers=["Content-Range", "X-Total-Count"]
+)
 
 # Initialize Swagger/OpenAPI documentation
 api = Api(
@@ -91,6 +141,19 @@ api.add_namespace(languages_ns, path='/languages')
 api.add_namespace(resume_ns, path='/resumes')
 api.add_namespace(lookup_ns, path='/lookups')
 
+# Ensure all responses have proper CORS headers
+@app.after_request
+def after_request(response):
+    # Additional CORS headers for better compatibility
+    origin = request.headers.get('Origin')
+    if origin in allowed_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+        # Join all allowed headers into a single string
+        response.headers['Access-Control-Allow-Headers'] = ', '.join(cors_headers)
+    return response
+
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -109,6 +172,23 @@ def health_check():
             'message': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+# Debug endpoint to see request headers (development only)
+@app.route('/api/debug/headers', methods=['GET', 'POST', 'OPTIONS'])
+def debug_headers():
+    """Debug endpoint to inspect request headers"""
+    if FLASK_ENV != 'development':
+        return jsonify({'error': 'Debug endpoint only available in development'}), 403
+    
+    headers_dict = dict(request.headers)
+    return jsonify({
+        'method': request.method,
+        'headers': headers_dict,
+        'origin': request.headers.get('Origin'),
+        'content_type': request.headers.get('Content-Type'),
+        'user_agent': request.headers.get('User-Agent'),
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
 
 # Error handlers
 @app.errorhandler(400)

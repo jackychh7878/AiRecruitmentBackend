@@ -35,7 +35,7 @@ class CandidateMasterProfile(db.Model):
     languages = db.relationship('CandidateLanguages', backref='candidate', lazy=True, cascade='all, delete-orphan')
     resumes = db.relationship('CandidateResume', backref='candidate', lazy=True, cascade='all, delete-orphan')
     
-    def to_dict(self, include_relationships=False):
+    def to_dict(self, include_relationships=False, include_embedding=False):
         data = {
             'id': self.id,
             'last_name': self.last_name,
@@ -53,11 +53,25 @@ class CandidateMasterProfile(db.Model):
             'is_active': self.is_active,
             'remarks': self.remarks,
             'ai_short_summary': self.ai_short_summary,
-            'embedding_vector': self.embedding_vector,
             'metadata_json': self.metadata_json,
             'created_date': self.created_date.isoformat() if self.created_date else None,
             'last_modified_date': self.last_modified_date.isoformat() if self.last_modified_date else None
         }
+        
+        # Only include embedding vector if specifically requested
+        if include_embedding and self.embedding_vector is not None:
+            try:
+                # Convert numpy array or pgvector to Python list for JSON serialization
+                if hasattr(self.embedding_vector, 'tolist'):
+                    data['embedding_vector'] = self.embedding_vector.tolist()
+                elif isinstance(self.embedding_vector, (list, tuple)):
+                    data['embedding_vector'] = list(self.embedding_vector)
+                else:
+                    # Handle other potential vector types
+                    data['embedding_vector'] = list(self.embedding_vector)
+            except (AttributeError, TypeError):
+                # If conversion fails, exclude embedding from response
+                pass
         
         if include_relationships:
             data.update({
