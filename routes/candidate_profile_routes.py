@@ -2059,11 +2059,11 @@ class CandidateSearchExamples(Resource):
                     'Use natural language - the system understands conversational queries'
                 ],
                 'confidence_thresholds': {
-                    '0.9+': 'Very High - Very specific matches',
-                    '0.8+': 'High - Strong matches',
-                    '0.7+': 'Good - Relevant matches (default)',
-                    '0.6+': 'Moderate - Somewhat relevant',
-                    '0.5+': 'Low - Basic relevance'
+                    '0.5+': 'Very High - Very specific matches',
+                    '0.4+': 'High - Strong matches',
+                    '0.3+': 'Good - Relevant matches (default)',
+                    '0.2+': 'Moderate - Somewhat relevant',
+                    '0.1+': 'Low - Basic relevance'
                 }
             }
             
