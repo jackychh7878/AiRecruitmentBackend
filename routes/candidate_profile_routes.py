@@ -12,6 +12,7 @@ from werkzeug.datastructures import FileStorage
 from services.resume_parser import resume_parser
 from services.ai_summary_service import ai_summary_service
 from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
+from services.semantic_search_service import semantic_search_service
 from flask import current_app
 
 # Create namespace
@@ -90,6 +91,68 @@ resumes_model = candidate_profile_ns.model('Resumes', {
     'is_active': fields.Boolean(description='Is active'),
     'created_date': fields.DateTime(readonly=True, description='Creation date'),
     'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
+})
+
+# Define semantic search models
+semantic_search_request_model = candidate_profile_ns.model('SemanticSearchRequest', {
+    'query': fields.String(required=True, description='Natural language search query'),
+    'confidence_threshold': fields.Float(description='Minimum similarity score (0.0 to 1.0, default: 0.7)'),
+    'max_results': fields.Integer(description='Maximum number of results (default: 50)'),
+    'include_relationships': fields.Boolean(description='Whether to include relationship data (default: false)')
+})
+
+semantic_search_result_model = candidate_profile_ns.model('SemanticSearchResult', {
+    'id': fields.Integer(readonly=True, description='Candidate ID'),
+    'first_name': fields.String(description='First name'),
+    'last_name': fields.String(description='Last name'),
+    'email': fields.String(description='Email address'),
+    'location': fields.String(description='Location'),
+    'phone_number': fields.String(description='Phone number'),
+    'personal_summary': fields.String(description='Personal summary'),
+    'availability_weeks': fields.Integer(description='Availability in weeks'),
+    'preferred_work_types': fields.String(description='Preferred work types'),
+    'right_to_work': fields.Boolean(description='Right to work status'),
+    'salary_expectation': fields.Float(description='Salary expectation'),
+    'classification_of_interest': fields.String(description='Classification of interest'),
+    'sub_classification_of_interest': fields.String(description='Sub-classification of interest'),
+    'is_active': fields.Boolean(description='Is active'),
+    'remarks': fields.String(description='Remarks'),
+    'ai_short_summary': fields.String(description='AI-generated summary'),
+    'created_date': fields.DateTime(description='Creation date'),
+    'last_modified_date': fields.DateTime(description='Last modification date'),
+    'semantic_score': fields.Float(description='Semantic similarity score (0.0 to 1.0)'),
+    'keyword_score': fields.Float(description='Keyword matching score (0.0 to 1.0)'),
+    'hybrid_score': fields.Float(description='Final hybrid relevance score (0.0 to 1.0)'),
+    'confidence_level': fields.String(description='Confidence level description'),
+    'relevance_percentage': fields.Float(description='Relevance percentage'),
+    'scoring_breakdown': fields.Raw(description='Detailed scoring breakdown with weights and contributions'),
+    'career_history': fields.List(fields.Nested(career_history_model), description='Career history'),
+    'skills': fields.List(fields.Nested(skills_model), description='Skills'),
+    'education': fields.List(fields.Nested(education_model), description='Education'),
+    'licenses_certifications': fields.List(fields.Nested(licenses_certifications_model), description='Licenses and certifications'),
+    'languages': fields.List(fields.Nested(languages_model), description='Languages'),
+    'resumes': fields.List(fields.Nested(resumes_model), description='Resumes')
+})
+
+semantic_search_response_model = candidate_profile_ns.model('SemanticSearchResponse', {
+    'success': fields.Boolean(description='Whether the search was successful'),
+    'results': fields.List(fields.Nested(semantic_search_result_model), description='Search results'),
+    'total_found': fields.Integer(description='Total number of candidates found'),
+    'query': fields.String(description='Original search query'),
+    'confidence_threshold': fields.Float(description='Confidence threshold used'),
+    'query_embedding_dimension': fields.Integer(description='Dimension of query embedding vector'),
+    'error': fields.String(description='Error message if search failed')
+})
+
+search_statistics_model = candidate_profile_ns.model('SearchStatistics', {
+    'total_active_candidates': fields.Integer(description='Total number of active candidates'),
+    'candidates_with_embeddings': fields.Integer(description='Number of candidates with embeddings'),
+    'candidates_without_embeddings': fields.Integer(description='Number of candidates without embeddings'),
+    'embedding_coverage_percentage': fields.Float(description='Percentage of candidates with embeddings'),
+    'default_confidence_threshold': fields.Float(description='Default confidence threshold'),
+    'max_results_limit': fields.Integer(description='Maximum results limit'),
+    'hybrid_scoring': fields.Raw(description='Hybrid scoring configuration and formula'),
+    'error': fields.String(description='Error message if failed to get statistics')
 })
 
 # Define data models for Swagger documentation
@@ -1826,4 +1889,185 @@ class CandidateResumeDownload(Resource):
             return response
             
         except Exception as e:
-            candidate_profile_ns.abort(500, f'Download failed: {str(e)}') 
+            candidate_profile_ns.abort(500, f'Download failed: {str(e)}')
+
+# Semantic Search Endpoints
+@candidate_profile_ns.route('/semantic-search')
+class CandidateSemanticSearch(Resource):
+    @candidate_profile_ns.doc('semantic_search_candidates')
+    @candidate_profile_ns.expect(semantic_search_request_model)
+    @candidate_profile_ns.marshal_with(semantic_search_response_model)
+    def post(self):
+        """
+        Search candidates using hybrid semantic similarity and keyword matching
+        
+        Performs intelligent search by:
+        1. Converting the query to an embedding vector for semantic similarity
+        2. Analyzing exact keyword matches in candidate profiles
+        3. Combining both scores using configurable weights
+        4. Returning results sorted by final hybrid relevance score
+        
+        Formula: hybrid_score = (semantic_weight × semantic_score) + (keyword_weight × keyword_score)
+        
+        Example queries:
+        - "data scientist with Python experience"
+        - "software engineer in fintech"
+        - "project manager with agile experience"
+        """
+        try:
+            data = request.get_json()
+            
+            if not data:
+                candidate_profile_ns.abort(400, 'Request body is required')
+            
+            query = data.get('query')
+            if not query or not query.strip():
+                candidate_profile_ns.abort(400, 'Search query is required')
+            
+            # Get optional parameters
+            confidence_threshold = data.get('confidence_threshold')
+            max_results = data.get('max_results')
+            include_relationships = data.get('include_relationships', False)
+            
+            # Validate confidence threshold
+            if confidence_threshold is not None:
+                if not isinstance(confidence_threshold, (int, float)) or not 0.0 <= confidence_threshold <= 1.0:
+                    candidate_profile_ns.abort(400, 'Confidence threshold must be a number between 0.0 and 1.0')
+            
+            # Validate max results
+            if max_results is not None:
+                if not isinstance(max_results, int) or max_results <= 0:
+                    candidate_profile_ns.abort(400, 'Max results must be a positive integer')
+                if max_results > 100:  # Set reasonable upper limit
+                    candidate_profile_ns.abort(400, 'Max results cannot exceed 100')
+            
+            # Perform semantic search
+            import asyncio
+            
+            # Create new event loop for async operation
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                search_results = loop.run_until_complete(
+                    semantic_search_service.search_candidates(
+                        query=query.strip(),
+                        confidence_threshold=confidence_threshold,
+                        max_results=max_results,
+                        include_relationships=include_relationships
+                    )
+                )
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None)
+            
+            if not search_results.get('success'):
+                candidate_profile_ns.abort(500, f"Search failed: {search_results.get('error', 'Unknown error')}")
+            
+            return search_results
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Semantic search failed: {str(e)}')
+
+@candidate_profile_ns.route('/semantic-search/statistics')
+class CandidateSearchStatistics(Resource):
+    @candidate_profile_ns.doc('get_search_statistics')
+    @candidate_profile_ns.marshal_with(search_statistics_model)
+    def get(self):
+        """
+        Get statistics about the semantic search system
+        
+        Returns information about:
+        - Total candidates and embedding coverage
+        - Default settings and limits
+        - System health metrics
+        """
+        try:
+            stats = semantic_search_service.get_search_statistics()
+            
+            if 'error' in stats:
+                candidate_profile_ns.abort(500, f"Failed to get statistics: {stats['error']}")
+            
+            return stats
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get search statistics: {str(e)}')
+
+@candidate_profile_ns.route('/semantic-search/example-queries')
+class CandidateSearchExamples(Resource):
+    @candidate_profile_ns.doc('get_search_examples')
+    def get(self):
+        """
+        Get example search queries to help users understand the system
+        
+        Returns a list of example queries that demonstrate different search capabilities
+        """
+        try:
+            examples = {
+                'examples': [
+                    {
+                        'category': 'Technical Skills',
+                        'queries': [
+                            'Python developer with machine learning experience',
+                            'Full-stack developer with React and Node.js',
+                            'Data scientist with SQL and Python skills',
+                            'DevOps engineer with AWS and Docker experience'
+                        ]
+                    },
+                    {
+                        'category': 'Industry/Domain',
+                        'queries': [
+                            'Software engineer in fintech industry',
+                            'Project manager with healthcare experience',
+                            'Data analyst in e-commerce',
+                            'UX designer for mobile applications'
+                        ]
+                    },
+                    {
+                        'category': 'Experience Level',
+                        'queries': [
+                            'Senior software engineer with 5+ years experience',
+                            'Junior developer with internship experience',
+                            'Team lead with agile methodology experience',
+                            'Architect with microservices experience'
+                        ]
+                    },
+                    {
+                        'category': 'Location/Remote',
+                        'queries': [
+                            'Remote software developer',
+                            'Data scientist in New York',
+                            'Frontend developer in London',
+                            'Product manager in San Francisco'
+                        ]
+                    },
+                    {
+                        'category': 'Education/Certifications',
+                        'queries': [
+                            'Computer science graduate with AWS certification',
+                            'MBA with project management certification',
+                            'Data scientist with PhD in statistics',
+                            'Developer with Microsoft certifications'
+                        ]
+                    }
+                ],
+                'tips': [
+                    'Use specific skills and technologies for better results',
+                    'Include industry or domain knowledge when relevant',
+                    'Mention experience level or years of experience',
+                    'Specify location preferences if important',
+                    'Use natural language - the system understands conversational queries'
+                ],
+                'confidence_thresholds': {
+                    '0.9+': 'Very High - Very specific matches',
+                    '0.8+': 'High - Strong matches',
+                    '0.7+': 'Good - Relevant matches (default)',
+                    '0.6+': 'Moderate - Somewhat relevant',
+                    '0.5+': 'Low - Basic relevance'
+                }
+            }
+            
+            return examples
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get search examples: {str(e)}') 
