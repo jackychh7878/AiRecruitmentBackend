@@ -129,11 +129,11 @@ INSERT INTO ai_recruitment_com_code (category, com_code, description) VALUES
 ('Sub classification of interest', 'Other', 'Other ICT roles not specified'),
 
 -- Language proficiency levels (keeping for reference)
-('LANGUAGE_PROFICIENCY', 'NATIVE', 'Native speaker'),
-('LANGUAGE_PROFICIENCY', 'FLUENT', 'Fluent'),
-('LANGUAGE_PROFICIENCY', 'ADVANCED', 'Advanced'),
-('LANGUAGE_PROFICIENCY', 'INTERMEDIATE', 'Intermediate'),
-('LANGUAGE_PROFICIENCY', 'BASIC', 'Basic');
+('Language proficiency', 'NATIVE', 'Native speaker'),
+('Language proficiency', 'FLUENT', 'Fluent'),
+('Language proficiency', 'ADVANCED', 'Advanced'),
+('Language proficiency', 'INTERMEDIATE', 'Intermediate'),
+('Language proficiency', 'BASIC', 'Basic');
 
 -- Insert sample candidate profiles
 INSERT INTO candidate_master_profile (

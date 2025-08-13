@@ -115,6 +115,7 @@ semantic_search_result_model = candidate_profile_ns.model('SemanticSearchResult'
     'salary_expectation': fields.Float(description='Salary expectation'),
     'classification_of_interest': fields.String(description='Classification of interest'),
     'sub_classification_of_interest': fields.String(description='Sub-classification of interest'),
+    'citizenship': fields.String(description='Citizenship/visa status'),
     'is_active': fields.Boolean(description='Is active'),
     'remarks': fields.String(description='Remarks'),
     'ai_short_summary': fields.String(description='AI-generated summary'),
@@ -170,6 +171,7 @@ candidate_model = candidate_profile_ns.model('Candidate', {
     'salary_expectation': fields.Float(description='Salary expectation'),
     'classification_of_interest': fields.String(description='Classification of interest'),
     'sub_classification_of_interest': fields.String(description='Sub-classification of interest'),
+    'citizenship': fields.String(description='Citizenship/visa status'),
     'is_active': fields.Boolean(description='Is active'),
     'remarks': fields.String(description='Remarks'),
     'ai_short_summary': fields.String(description='AI generated short summary'),
@@ -214,6 +216,7 @@ candidate_bulk_create_model = candidate_profile_ns.model('CandidateBulkCreate', 
     'salary_expectation': fields.Float(description='Salary expectation'),
     'classification_of_interest': fields.String(description='Classification of interest'),
     'sub_classification_of_interest': fields.String(description='Sub-classification of interest'),
+    'citizenship': fields.String(description='Citizenship/visa status'),
     'is_active': fields.Boolean(description='Is active', default=True),
     # Relationship data
     'career_history': fields.List(fields.Nested(career_history_model), description='Career history records'),
@@ -245,6 +248,7 @@ candidate_input_model = candidate_profile_ns.model('CandidateInput', {
     'salary_expectation': fields.Float(description='Salary expectation'),
     'classification_of_interest': fields.String(description='Classification of interest'),
     'sub_classification_of_interest': fields.String(description='Sub-classification of interest'),
+    'citizenship': fields.String(description='Citizenship/visa status'),
     'remarks': fields.String(description='Remarks'),
     'ai_short_summary': fields.String(description='AI generated short summary'),
     'metadata_json': fields.Raw(description='Additional metadata')
@@ -267,6 +271,7 @@ class CandidateList(Resource):
     @candidate_profile_ns.param('classification', 'Filter by classification')
     @candidate_profile_ns.param('sub_classification', 'Filter by sub-classification')
     @candidate_profile_ns.param('location', 'Filter by location')
+    @candidate_profile_ns.param('citizenship', 'Filter by citizenship/visa status')
     @candidate_profile_ns.param('include_relationships', 'Include related data', type=bool, default=False)
     def get(self):
         """Get all candidates with optional filtering"""
@@ -278,6 +283,7 @@ class CandidateList(Resource):
             classification = request.args.get('classification')
             sub_classification = request.args.get('sub_classification')
             location = request.args.get('location')
+            citizenship = request.args.get('citizenship')
             include_relationships = request.args.get('include_relationships', 'false').lower() == 'true'
             
             # Build query
@@ -291,6 +297,8 @@ class CandidateList(Resource):
                 query = query.filter(CandidateMasterProfile.sub_classification_of_interest.ilike(f'%{sub_classification}%'))
             if location:
                 query = query.filter(CandidateMasterProfile.location.ilike(f'%{location}%'))
+            if citizenship:
+                query = query.filter(CandidateMasterProfile.citizenship.ilike(f'%{citizenship}%'))
             
             # Pagination
             candidates = query.paginate(
@@ -340,6 +348,7 @@ class CandidateList(Resource):
                 salary_expectation=data.get('salary_expectation'),
                 classification_of_interest=data.get('classification_of_interest'),
                 sub_classification_of_interest=data.get('sub_classification_of_interest'),
+                citizenship=data.get('citizenship'),
                 remarks=data.get('remarks'),
                 ai_short_summary=data.get('ai_short_summary'),
                 metadata_json=data.get('metadata_json')
@@ -391,7 +400,7 @@ class Candidate(Resource):
                 'first_name', 'last_name', 'email', 'location', 'phone_number',
                 'personal_summary', 'availability_weeks', 'preferred_work_types',
                 'right_to_work', 'salary_expectation', 'classification_of_interest',
-                'sub_classification_of_interest', 'is_active', 'remarks',
+                'sub_classification_of_interest', 'citizenship', 'is_active', 'remarks',
                 'ai_short_summary', 'metadata_json'
             ]
             
@@ -471,7 +480,7 @@ class Candidate(Resource):
                     'first_name', 'last_name', 'email', 'location', 'phone_number',
                     'personal_summary', 'availability_weeks', 'preferred_work_types',
                     'right_to_work', 'salary_expectation', 'classification_of_interest',
-                    'sub_classification_of_interest', 'is_active', 'remarks', 'metadata_json'
+                    'sub_classification_of_interest', 'citizenship', 'is_active', 'remarks', 'metadata_json'
                 ]
                 
                 for field in updatable_fields:
@@ -619,7 +628,8 @@ class CandidateSearch(Resource):
                     CandidateMasterProfile.personal_summary.ilike(f'%{query_text}%'),
                     CandidateMasterProfile.ai_short_summary.ilike(f'%{query_text}%'),
                     CandidateMasterProfile.classification_of_interest.ilike(f'%{query_text}%'),
-                    CandidateMasterProfile.sub_classification_of_interest.ilike(f'%{query_text}%')
+                    CandidateMasterProfile.sub_classification_of_interest.ilike(f'%{query_text}%'),
+                    CandidateMasterProfile.citizenship.ilike(f'%{query_text}%')
                 )
             ).filter(CandidateMasterProfile.is_active == True)
             
@@ -1292,6 +1302,7 @@ class CandidateCreateWithPDF(Resource):
                     salary_expectation=data.get('salary_expectation'),
                     classification_of_interest=data.get('classification_of_interest'),
                     sub_classification_of_interest=data.get('sub_classification_of_interest'),
+                    citizenship=data.get('citizenship'),
                     is_active=data.get('is_active', True)
                 )
                 
@@ -1593,6 +1604,7 @@ class CandidateBulkCreate(Resource):
                     salary_expectation=data.get('salary_expectation'),
                     classification_of_interest=data.get('classification_of_interest'),
                     sub_classification_of_interest=data.get('sub_classification_of_interest'),
+                    citizenship=data.get('citizenship'),
                     is_active=data.get('is_active', True)
                 )
                 

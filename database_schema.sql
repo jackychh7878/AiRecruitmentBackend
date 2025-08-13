@@ -37,6 +37,7 @@ CREATE TABLE candidate_master_profile (
     salary_expectation DECIMAL(12,2),
     classification_of_interest VARCHAR(255),
     sub_classification_of_interest VARCHAR(255),
+    citizenship VARCHAR(255), -- Citizenship/visa status from predefined options
     is_active BOOLEAN DEFAULT true,
     remarks TEXT,
     ai_short_summary TEXT,

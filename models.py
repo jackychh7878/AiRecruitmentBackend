@@ -19,6 +19,7 @@ class CandidateMasterProfile(db.Model):
     salary_expectation = db.Column(db.Numeric(12, 2))
     classification_of_interest = db.Column(db.String(255))
     sub_classification_of_interest = db.Column(db.String(255))
+    citizenship = db.Column(db.String(255))
     is_active = db.Column(db.Boolean, default=True)
     remarks = db.Column(db.Text)
     ai_short_summary = db.Column(db.Text)
@@ -50,6 +51,7 @@ class CandidateMasterProfile(db.Model):
             'salary_expectation': float(self.salary_expectation) if self.salary_expectation else None,
             'classification_of_interest': self.classification_of_interest,
             'sub_classification_of_interest': self.sub_classification_of_interest,
+            'citizenship': self.citizenship,
             'is_active': self.is_active,
             'remarks': self.remarks,
             'ai_short_summary': self.ai_short_summary,
