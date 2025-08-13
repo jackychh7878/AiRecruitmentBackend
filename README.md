@@ -189,23 +189,54 @@ The application provides a comprehensive REST API with Swagger documentation:
 
 ## Environment Configuration
 
-Copy `env.example` to `.env` and configure:
+Create a `.env` file and configure the following variables:
 
 ```bash
 # Database
 DATABASE_URL=postgresql://username:password@host:port/database
 
-# OpenAI
-OPENAI_API_KEY=your_openai_api_key
+# Azure OpenAI (for AI summaries and embeddings)
 AZURE_OPENAI_API_KEY=your_azure_openai_key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+
+# Resume Parser Configuration
+# Set to 'true' to use Azure Document Intelligence, 'false' for open-source spaCy/NLTK
+USE_AZURE_DOCUMENT_INTELLIGENCE=false
+
+# Azure Document Intelligence (only needed if USE_AZURE_DOCUMENT_INTELLIGENCE=true)
+AZURE_DI_ENDPOINT=https://your-document-intelligence-resource.cognitiveservices.azure.com/
+AZURE_DI_API_KEY=your_document_intelligence_api_key
 
 # Flask
 FLASK_ENV=production
+FLASK_DEBUG=false
 HOST=0.0.0.0
 PORT=5000
-WORKERS=4
+FRONTEND_URL=http://localhost:3000
+
+# AI Processing Configuration
+SEMANTIC_SEARCH_SEMANTIC_WEIGHT=0.7
+AI_BULK_MAX_CONCURRENT_WORKERS=5
+AI_BULK_RATE_LIMIT_DELAY_SECONDS=1.0
 ```
+
+### Resume Parser Models
+
+The application supports two resume parsing modes:
+
+**1. Open Source Mode (Default)** - `USE_AZURE_DOCUMENT_INTELLIGENCE=false`
+- Uses spaCy and NLTK for named entity recognition
+- No additional costs or API keys required
+- Requires `python -m spacy download en_core_web_sm`
+
+**2. Azure Document Intelligence Mode** - `USE_AZURE_DOCUMENT_INTELLIGENCE=true`
+- Uses Azure's AI Document Intelligence service
+- Requires Azure subscription and API credentials
+- Generally provides better accuracy for structured documents
+- Incurs usage-based costs
 
 ## Contributing
 
