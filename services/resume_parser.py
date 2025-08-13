@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 # Azure Document Intelligence imports
 try:
     from azure.ai.documentintelligence import DocumentIntelligenceClient
-    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest, DocumentAnalysisFeature
     from azure.core.credentials import AzureKeyCredential
     AZURE_DI_AVAILABLE = True
 except ImportError:
@@ -454,7 +454,7 @@ class ResumeParser:
         
     def _analyze_document_with_azure_di(self, pdf_file) -> Dict[str, Any]:
         """
-        Analyze document using Azure Document Intelligence
+        Analyze document using Azure Document Intelligence with query fields for resume parsing
         
         Args:
             pdf_file: PDF file object
@@ -473,31 +473,48 @@ class ResumeParser:
             # Create AnalyzeDocumentRequest with the document content
             analyze_request = AnalyzeDocumentRequest(bytes_source=document_content)
             
-            # Try different models in order of preference
-            # prebuilt-layout provides the most structure but may not be available in all regions
-            # prebuilt-read is more widely available but provides less structure
-            # prebuilt-document is a general-purpose model
+            # Define focused query fields for resume parsing (essential fields only)
+            resume_query_fields = [
+                "Summary",
+                "Name", 
+                "Phone", 
+                "Email", 
+                "Education", 
+                "ProfessionalExperienceRole", 
+                "ProfessionalExperienceDescription",
+                "Skills", 
+                "LicensesCertifications", 
+                "Languages"
+            ]
+            
+            # Try different models with query fields support
+            # prebuilt-layout supports query fields and provides the best structure
             models_to_try = [
-                ("prebuilt-layout", "layout analysis with full structure"),
-                ("prebuilt-read", "text extraction with basic structure"), 
-                ("prebuilt-document", "general document analysis")
+                ("prebuilt-layout", "layout analysis with query fields"),
+                ("prebuilt-document", "general document analysis with query fields")
             ]
             
             last_error = None
             for model_name, description in models_to_try:
                 try:
                     logger.info(f"Trying Azure DI model: {model_name} ({description})")
+                    logger.info(f"Using {len(resume_query_fields)} query fields for resume parsing")
+                    
+                    # Use query fields feature for better extraction
                     poller = self.azure_di_client.begin_analyze_document(
                         model_name,
-                        analyze_request
+                        analyze_request,
+                        features=[DocumentAnalysisFeature.QUERY_FIELDS],
+                        query_fields=resume_query_fields
                     )
                     
                     result = poller.result()
-                    logger.info(f"Azure Document Intelligence analysis completed using {model_name}")
+                    logger.info(f"Azure Document Intelligence analysis completed using {model_name} with query fields")
                     
                     # Add metadata about which model was used
                     if hasattr(result, '__dict__'):
                         result._used_model = model_name
+                        result._used_query_fields = True
                     
                     return result
                     
@@ -507,9 +524,26 @@ class ResumeParser:
                         logger.warning(f"Model {model_name} not available: {model_error}")
                         continue
                     else:
-                        # If it's not a 404, this might be a more serious error
                         logger.error(f"Error with model {model_name}: {model_error}")
-                        raise model_error
+                        # If query fields fail, try without them as fallback
+                        try:
+                            logger.info(f"Retrying {model_name} without query fields as fallback")
+                            poller = self.azure_di_client.begin_analyze_document(
+                                model_name,
+                                analyze_request
+                            )
+                            result = poller.result()
+                            logger.info(f"Azure Document Intelligence analysis completed using {model_name} (fallback mode)")
+                            
+                            if hasattr(result, '__dict__'):
+                                result._used_model = model_name
+                                result._used_query_fields = False
+                            
+                            return result
+                            
+                        except Exception as fallback_error:
+                            logger.error(f"Fallback also failed for {model_name}: {fallback_error}")
+                            continue
             
             # If we get here, all models failed
             raise ValueError(f"All Azure DI models failed. Last error: {last_error}")
@@ -961,24 +995,40 @@ class ResumeParser:
             raise ValueError(f"Failed to parse resume: {str(e)}")
     
     def _parse_resume_with_azure_di(self, pdf_file) -> Dict[str, Any]:
-        """Parse resume using Azure Document Intelligence"""
+        """Parse resume using Azure Document Intelligence with query fields"""
         try:
             # Analyze document with Azure DI
             azure_result = self._analyze_document_with_azure_di(pdf_file)
             
-            # Extract information using Azure DI results
-            first_name, last_name, location = self._extract_name_and_location_from_azure_di(azure_result)
-            contact_info = self._extract_contact_info_from_azure_di(azure_result)
-            education = self._extract_education_from_azure_di(azure_result)
-            career_history = self._extract_work_experience_from_azure_di(azure_result)
-            skills = self._extract_skills_from_azure_di(azure_result)
-            languages = self._extract_languages_from_azure_di(azure_result)
-            licenses_certifications = self._extract_certifications_from_azure_di(azure_result)
+            # Check if query fields were used and extract accordingly
+            used_query_fields = getattr(azure_result, '_used_query_fields', False)
             
-            # Extract personal summary from content
-            personal_summary = None
-            if hasattr(azure_result, 'content'):
-                personal_summary = self._extract_summary_section(azure_result.content)
+            if used_query_fields:
+                logger.info("Using query fields extraction for resume parsing")
+                # Use the new query fields extraction method
+                first_name, last_name, location = self._extract_name_and_location_from_query_fields(azure_result)
+                contact_info = self._extract_contact_info_from_query_fields(azure_result)
+                education = self._extract_education_from_query_fields(azure_result)
+                career_history = self._extract_work_experience_from_query_fields(azure_result)
+                skills = self._extract_skills_from_query_fields(azure_result)
+                languages = self._extract_languages_from_query_fields(azure_result)
+                licenses_certifications = self._extract_certifications_from_query_fields(azure_result)
+                personal_summary = self._extract_summary_from_query_fields(azure_result)
+            else:
+                logger.info("Using traditional extraction methods (fallback)")
+                # Fall back to the original extraction methods
+                first_name, last_name, location = self._extract_name_and_location_from_azure_di(azure_result)
+                contact_info = self._extract_contact_info_from_azure_di(azure_result)
+                education = self._extract_education_from_azure_di(azure_result)
+                career_history = self._extract_work_experience_from_azure_di(azure_result)
+                skills = self._extract_skills_from_azure_di(azure_result)
+                languages = self._extract_languages_from_azure_di(azure_result)
+                licenses_certifications = self._extract_certifications_from_azure_di(azure_result)
+                
+                # Extract personal summary from content
+                personal_summary = None
+                if hasattr(azure_result, 'content'):
+                    personal_summary = self._extract_summary_section(azure_result.content)
             
             # Structure the response in the same format as candidate API
             parsed_data = {
@@ -1087,6 +1137,301 @@ class ResumeParser:
             logger.error(f"Error parsing resume with spaCy: {str(e)}")
             raise
 
+    def _extract_name_and_location_from_query_fields(self, result) -> tuple:
+        """Extract name and location from Azure DI query fields results"""
+        first_name = None
+        last_name = None
+        location = None
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract name from the Name field
+                    if 'Name' in doc.fields and doc.fields['Name']:
+                        full_name = doc.fields['Name'].value_string or doc.fields['Name'].content
+                        if full_name:
+                            name_parts = full_name.strip().split()
+                            if len(name_parts) >= 2:
+                                first_name = name_parts[0]
+                                last_name = ' '.join(name_parts[1:])
+                            elif len(name_parts) == 1:
+                                first_name = name_parts[0]
+                    
+                    # Location is not in our query fields, so we'll extract from content fallback
+                    # This will be handled by the fallback extraction methods
+        
+        return first_name, last_name, location
+    
+    def _extract_contact_info_from_query_fields(self, result) -> Dict[str, Optional[str]]:
+        """Extract contact information from Azure DI query fields results"""
+        contact_info = {
+            'email': None,
+            'phone_number': None
+        }
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract email
+                    if 'Email' in doc.fields and doc.fields['Email']:
+                        email_value = doc.fields['Email'].value_string or doc.fields['Email'].content
+                        if email_value and '@' in email_value:
+                            contact_info['email'] = email_value.strip()
+                    
+                    # Extract phone
+                    if 'Phone' in doc.fields and doc.fields['Phone']:
+                        phone_value = doc.fields['Phone'].value_string or doc.fields['Phone'].content
+                        if phone_value:
+                            # Clean phone number
+                            phone_clean = re.sub(r'[^\d+]', '', phone_value)
+                            if len(phone_clean) >= 10:
+                                contact_info['phone_number'] = phone_clean
+        
+        return contact_info
+    
+    def _extract_education_from_query_fields(self, result) -> List[Dict[str, Any]]:
+        """Extract education information from Azure DI query fields results"""
+        education_list = []
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract education from the Education field
+                    if 'Education' in doc.fields and doc.fields['Education']:
+                        education_value = doc.fields['Education'].value_string or doc.fields['Education'].content
+                        if education_value:
+                            # Parse education content to extract structured information
+                            education_record = {
+                                'school': None,
+                                'degree': None,
+                                'field_of_study': None,
+                                'start_date': None,
+                                'end_date': None,
+                                'grade': None,
+                                'description': education_value
+                            }
+                            
+                            # Try to extract school and degree from the education text
+                            # Look for common patterns like "Bachelor of Science in Computer Science from MIT"
+                            degree_patterns = [
+                                r'(bachelor|master|phd|doctorate|diploma|certificate|degree)[\s\w]*',
+                                r'(b\.?s\.?|m\.?s\.?|b\.?a\.?|m\.?a\.?|ph\.?d\.?)[\s\w]*'
+                            ]
+                            school_patterns = [
+                                r'(university|college|institute|school)[\s\w]{1,50}',
+                                r'from\s+([\w\s]+?)(?:\s|$)',
+                                r'at\s+([\w\s]+?)(?:\s|$)'
+                            ]
+                            
+                            for pattern in degree_patterns:
+                                match = re.search(pattern, education_value, re.IGNORECASE)
+                                if match:
+                                    education_record['degree'] = match.group().strip()
+                                    break
+                            
+                            for pattern in school_patterns:
+                                match = re.search(pattern, education_value, re.IGNORECASE)
+                                if match:
+                                    school_name = match.group().replace('from', '').replace('at', '').strip()
+                                    if school_name:
+                                        education_record['school'] = school_name
+                                        break
+                            
+                            education_list.append(education_record)
+        
+        return education_list
+    
+    def _extract_work_experience_from_query_fields(self, result) -> List[Dict[str, Any]]:
+        """Extract work experience from Azure DI query fields results with separate role and description"""
+        experience_list = []
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract role and description separately
+                    role_value = None
+                    description_value = None
+                    
+                    if 'ProfessionalExperienceRole' in doc.fields and doc.fields['ProfessionalExperienceRole']:
+                        role_value = doc.fields['ProfessionalExperienceRole'].value_string or doc.fields['ProfessionalExperienceRole'].content
+                    
+                    if 'ProfessionalExperienceDescription' in doc.fields and doc.fields['ProfessionalExperienceDescription']:
+                        description_value = doc.fields['ProfessionalExperienceDescription'].value_string or doc.fields['ProfessionalExperienceDescription'].content
+                    
+                    # Process if we have at least one of the fields
+                    if role_value or description_value:
+                        experience_record = {
+                            'job_title': None,
+                            'company_name': None,
+                            'start_date': None,
+                            'end_date': None,
+                            'description': description_value
+                        }
+                        
+                        # Extract job title and company from role field
+                        if role_value:
+                            # Try to extract job title from role
+                            job_title_patterns = [
+                                r'(senior|junior|lead|principal)?\s*(software|web|mobile|data|system)?\s*(engineer|developer|analyst|manager|designer|architect|scientist)',
+                                r'(project|product|marketing|sales|operations|hr|finance)\s*manager',
+                                r'(ceo|cto|cfo|vp|director|coordinator|specialist|consultant)',
+                                r'^([^,\n@]+?)(?:\s+at\s|\s+@\s|$)',  # Everything before "at" or "@" as job title
+                            ]
+                            
+                            for pattern in job_title_patterns:
+                                match = re.search(pattern, role_value, re.IGNORECASE)
+                                if match:
+                                    if pattern.startswith('^'):  # For the general pattern
+                                        experience_record['job_title'] = match.group(1).strip()
+                                    else:
+                                        experience_record['job_title'] = match.group().strip()
+                                    break
+                            
+                            # Extract company name from role field
+                            company_patterns = [
+                                r'(?:at|@)\s+([A-Z][a-zA-Z\s&]+?)(?:\s|$|,)',  # After "at" or "@"
+                                r'([A-Z][a-zA-Z\s&]+)\s+(Inc|LLC|Corp|Corporation|Ltd|Limited|Company|Co\.)',
+                                r'([A-Z][a-zA-Z\s&]+)\s+(Technologies|Tech|Software|Systems|Solutions)'
+                            ]
+                            
+                            for pattern in company_patterns:
+                                match = re.search(pattern, role_value)
+                                if match:
+                                    if '(?:at|@)' in pattern:
+                                        company_name = match.group(1).strip()
+                                    else:
+                                        company_name = match.group().strip()
+                                    experience_record['company_name'] = company_name
+                                    break
+                            
+                            # If no job title was extracted yet, use the whole role as job title
+                            if not experience_record['job_title']:
+                                # Clean up the role value to use as job title
+                                clean_role = re.sub(r'\s+at\s+.*$', '', role_value, flags=re.IGNORECASE).strip()
+                                clean_role = re.sub(r'\s+@\s+.*$', '', clean_role, flags=re.IGNORECASE).strip()
+                                if clean_role:
+                                    experience_record['job_title'] = clean_role
+                        
+                        # Also try to extract company from description if not found in role
+                        if not experience_record['company_name'] and description_value:
+                            company_patterns = [
+                                r'(?:at|@)\s+([A-Z][a-zA-Z\s&]+?)(?:\s|$|,)',
+                                r'([A-Z][a-zA-Z\s&]+)\s+(Inc|LLC|Corp|Corporation|Ltd|Limited|Company|Co\.)',
+                                r'([A-Z][a-zA-Z\s&]+)\s+(Technologies|Tech|Software|Systems|Solutions)'
+                            ]
+                            
+                            for pattern in company_patterns:
+                                match = re.search(pattern, description_value)
+                                if match:
+                                    if '(?:at|@)' in pattern:
+                                        company_name = match.group(1).strip()
+                                    else:
+                                        company_name = match.group().strip()
+                                    experience_record['company_name'] = company_name
+                                    break
+                        
+                        experience_list.append(experience_record)
+        
+        return experience_list
+    
+    def _extract_skills_from_query_fields(self, result) -> List[Dict[str, Any]]:
+        """Extract skills from Azure DI query fields results"""
+        skills_list = []
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract skills from the Skills field
+                    if 'Skills' in doc.fields and doc.fields['Skills']:
+                        skills_value = doc.fields['Skills'].value_string or doc.fields['Skills'].content
+                        if skills_value:
+                            # Split skills by common delimiters
+                            skills = re.split(r'[,;|\n\r•·\-]', skills_value)
+                            for skill in skills:
+                                skill = skill.strip()
+                                if skill and len(skill) > 1:
+                                    skills_list.append({
+                                        'skills': skill.title(),
+                                        'career_history_id': None
+                                    })
+        
+        return skills_list
+    
+    def _extract_languages_from_query_fields(self, result) -> List[Dict[str, Any]]:
+        """Extract languages from Azure DI query fields results"""
+        languages_list = []
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract languages from the Languages field
+                    if 'Languages' in doc.fields and doc.fields['Languages']:
+                        languages_value = doc.fields['Languages'].value_string or doc.fields['Languages'].content
+                        if languages_value:
+                            # Parse language mentions
+                            languages = re.split(r'[,;|\n\r•·\-]', languages_value)
+                            for lang in languages:
+                                lang = lang.strip()
+                                if lang and len(lang) > 1:
+                                    # Try to extract proficiency if mentioned
+                                    proficiency = 'Intermediate'  # Default
+                                    proficiency_keywords = ['native', 'fluent', 'advanced', 'intermediate', 'basic', 'beginner']
+                                    for prof in proficiency_keywords:
+                                        if prof.lower() in lang.lower():
+                                            proficiency = prof.title()
+                                            lang = lang.replace(prof, '').strip()
+                                            break
+                                    
+                                    languages_list.append({
+                                        'language': lang.title(),
+                                        'proficiency_level': proficiency
+                                    })
+        
+        return languages_list
+    
+    def _extract_certifications_from_query_fields(self, result) -> List[Dict[str, Any]]:
+        """Extract certifications from Azure DI query fields results"""
+        certifications_list = []
+        
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract certifications from the LicensesCertifications field
+                    if 'LicensesCertifications' in doc.fields and doc.fields['LicensesCertifications']:
+                        certs_value = doc.fields['LicensesCertifications'].value_string or doc.fields['LicensesCertifications'].content
+                        if certs_value:
+                            # Parse certification mentions
+                            certs = re.split(r'[,;|\n\r•·\-]', certs_value)
+                            for cert in certs:
+                                cert = cert.strip()
+                                if cert and len(cert) > 2:
+                                    certifications_list.append({
+                                        'name': cert.title(),
+                                        'issuing_organization': None,
+                                        'issue_date': None,
+                                        'expiration_date': None,
+                                        'credential_id': None,
+                                        'credential_url': None
+                                    })
+        
+        return certifications_list
+    
+    def _extract_summary_from_query_fields(self, result) -> Optional[str]:
+        """Extract professional summary from Azure DI query fields results"""
+        if hasattr(result, 'documents') and result.documents:
+            for doc in result.documents:
+                if hasattr(doc, 'fields') and doc.fields:
+                    # Extract summary from the Summary field
+                    if 'Summary' in doc.fields and doc.fields['Summary']:
+                        summary_value = doc.fields['Summary'].value_string or doc.fields['Summary'].content
+                        if summary_value and len(summary_value.strip()) > 50:  # Minimum length check
+                            summary = summary_value.strip()
+                            if len(summary) > 500:
+                                summary = summary[:500] + "..."
+                            return summary
+        
+        return None
+
     def _convert_azure_di_to_structured_text(self, result) -> str:
         """
         Convert Azure DI result to structured text format that can be used with LLM
@@ -1183,5 +1528,20 @@ class ResumeParser:
             'summary': None
         }
 
-# Global instance
-resume_parser = ResumeParser() 
+# Global instance - created lazily to pick up environment variable changes
+_resume_parser_instance = None
+
+def get_resume_parser():
+    """Get or create the resume parser instance"""
+    global _resume_parser_instance
+    if _resume_parser_instance is None:
+        _resume_parser_instance = ResumeParser()
+    return _resume_parser_instance
+
+def reset_resume_parser():
+    """Reset the resume parser instance (useful for testing or config changes)"""
+    global _resume_parser_instance
+    _resume_parser_instance = None
+
+# For backward compatibility
+resume_parser = get_resume_parser() 

@@ -9,7 +9,7 @@ from models import (
 from datetime import datetime
 import json
 from werkzeug.datastructures import FileStorage
-from services.resume_parser import resume_parser
+from services.resume_parser import resume_parser, reset_resume_parser
 from services.ai_summary_service import ai_summary_service
 from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
 from services.semantic_search_service import semantic_search_service
@@ -1552,6 +1552,85 @@ class CandidateResumeParserInfo(Resource):
                     'Include clear section headers (Education, Experience, Skills, etc.)',
                     'Avoid complex layouts or graphics that may interfere with text extraction'
                 ]
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/parse-resume/debug-config')
+class ResumeParserDebugConfig(Resource):
+    @candidate_profile_ns.doc('get_parser_debug_config')
+    def get(self):
+        """Get current resume parser configuration for debugging"""
+        try:
+            import os
+            from dotenv import load_dotenv
+            
+            # Reload environment variables to get current state
+            load_dotenv()
+            
+            # Get current environment variable
+            use_azure_di_env = os.getenv('USE_AZURE_DOCUMENT_INTELLIGENCE', 'false')
+            
+            # Get parser's current configuration
+            parser_uses_azure = getattr(resume_parser, 'use_azure_di', None)
+            
+            config_info = {
+                'environment_variable': {
+                    'USE_AZURE_DOCUMENT_INTELLIGENCE': use_azure_di_env,
+                    'parsed_as_boolean': use_azure_di_env.lower() == 'true'
+                },
+                'parser_current_config': {
+                    'uses_azure_di': parser_uses_azure,
+                    'has_azure_client': hasattr(resume_parser, 'azure_di_client'),
+                    'has_spacy_nlp': hasattr(resume_parser, 'nlp'),
+                    'supports_query_fields': parser_uses_azure  # Query fields only available with Azure DI
+                },
+                'azure_di_env_vars': {
+                    'AZURE_DI_ENDPOINT': 'SET' if os.getenv('AZURE_DI_ENDPOINT') else 'NOT SET',
+                    'AZURE_DI_API_KEY': 'SET' if os.getenv('AZURE_DI_API_KEY') else 'NOT SET'
+                },
+                'azure_di_features': {
+                    'query_fields_enabled': parser_uses_azure,
+                    'query_fields_count': 10 if parser_uses_azure else 0,
+                    'query_fields': ['Summary', 'Name', 'Phone', 'Email', 'Education', 'ProfessionalExperienceRole', 'ProfessionalExperienceDescription', 'Skills', 'LicensesCertifications', 'Languages'] if parser_uses_azure else [],
+                    'fallback_to_regex': True,
+                    'supported_models': ['prebuilt-layout', 'prebuilt-document'] if parser_uses_azure else []
+                },
+                'recommendation': 'Restart Flask app if environment variable was changed after startup' if use_azure_di_env.lower() == 'true' and not parser_uses_azure else 'Configuration looks correct'
+            }
+            
+            return config_info, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+    @candidate_profile_ns.doc('reset_parser_config')
+    def post(self):
+        """Reset and reinitialize the resume parser with current environment variables"""
+        try:
+            # Reset the parser instance
+            reset_resume_parser()
+            
+            # Force reimport to get new instance
+            global resume_parser
+            from services.resume_parser import get_resume_parser
+            resume_parser = get_resume_parser()
+            
+            # Get new configuration
+            import os
+            use_azure_di_env = os.getenv('USE_AZURE_DOCUMENT_INTELLIGENCE', 'false')
+            
+            return {
+                'message': 'Resume parser reset and reinitialized',
+                'new_config': {
+                    'environment_variable': use_azure_di_env,
+                    'parser_uses_azure_di': getattr(resume_parser, 'use_azure_di', None),
+                    'has_azure_client': hasattr(resume_parser, 'azure_di_client'),
+                    'has_spacy_nlp': hasattr(resume_parser, 'nlp'),
+                    'query_fields_enabled': getattr(resume_parser, 'use_azure_di', False),
+                    'extraction_method': 'Azure DI with Query Fields' if getattr(resume_parser, 'use_azure_di', False) else 'spaCy + NLTK + Regex'
+                }
             }, 200
             
         except Exception as e:
