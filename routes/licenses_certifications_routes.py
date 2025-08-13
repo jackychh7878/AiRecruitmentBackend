@@ -10,12 +10,12 @@ licenses_certifications_ns = Namespace('licenses_certifications', description='L
 license_certification_model = licenses_certifications_ns.model('LicenseCertification', {
     'id': fields.Integer(readonly=True, description='License/Certification ID'),
     'candidate_id': fields.Integer(required=True, description='Candidate ID'),
-    'name': fields.String(required=True, description='License/Certification name'),
-    'issuing_organization': fields.String(description='Issuing organization'),
+    'license_certification_name': fields.String(required=True, description='License/Certification name'),
+    'issuing_organisation': fields.String(description='Issuing organisation'),
     'issue_date': fields.String(description='Issue date'),
-    'expiration_date': fields.String(description='Expiration date'),
-    'credential_id': fields.String(description='Credential ID'),
-    'credential_url': fields.String(description='Credential URL'),
+    'expiry_date': fields.String(description='Expiry date'),
+    'is_no_expiry': fields.Boolean(description='Has no expiry date'),
+    'description': fields.String(description='Description'),
     'is_active': fields.Boolean(description='Is active'),
     'created_date': fields.DateTime(readonly=True, description='Creation date'),
     'last_modified_date': fields.DateTime(readonly=True, description='Last modification date')
@@ -23,12 +23,12 @@ license_certification_model = licenses_certifications_ns.model('LicenseCertifica
 
 license_certification_input_model = licenses_certifications_ns.model('LicenseCertificationInput', {
     'candidate_id': fields.Integer(required=True, description='Candidate ID'),
-    'name': fields.String(required=True, description='License/Certification name'),
-    'issuing_organization': fields.String(description='Issuing organization'),
+    'license_certification_name': fields.String(required=True, description='License/Certification name'),
+    'issuing_organisation': fields.String(description='Issuing organisation'),
     'issue_date': fields.String(description='Issue date (YYYY-MM-DD)'),
-    'expiration_date': fields.String(description='Expiration date (YYYY-MM-DD)'),
-    'credential_id': fields.String(description='Credential ID'),
-    'credential_url': fields.String(description='Credential URL')
+    'expiry_date': fields.String(description='Expiry date (YYYY-MM-DD)'),
+    'is_no_expiry': fields.Boolean(description='Has no expiry date'),
+    'description': fields.String(description='Description')
 })
 
 license_certification_list_model = licenses_certifications_ns.model('LicenseCertificationList', {
@@ -45,8 +45,8 @@ class LicensesCertificationsList(Resource):
     @licenses_certifications_ns.param('page', 'Page number', type=int, default=1)
     @licenses_certifications_ns.param('per_page', 'Items per page', type=int, default=10)
     @licenses_certifications_ns.param('candidate_id', 'Filter by candidate ID', type=int)
-    @licenses_certifications_ns.param('name', 'Filter by license/certification name')
-    @licenses_certifications_ns.param('issuing_organization', 'Filter by issuing organization')
+    @licenses_certifications_ns.param('license_certification_name', 'Filter by license/certification name')
+    @licenses_certifications_ns.param('issuing_organisation', 'Filter by issuing organisation')
     @licenses_certifications_ns.param('is_active', 'Filter by active status', type=bool)
     def get(self):
         """Get all licenses and certifications with optional filtering"""
@@ -55,8 +55,8 @@ class LicensesCertificationsList(Resource):
             page = request.args.get('page', 1, type=int)
             per_page = request.args.get('per_page', 10, type=int)
             candidate_id = request.args.get('candidate_id', type=int)
-            name = request.args.get('name')
-            issuing_organization = request.args.get('issuing_organization')
+            license_certification_name = request.args.get('license_certification_name')
+            issuing_organisation = request.args.get('issuing_organisation')
             is_active = request.args.get('is_active', type=bool)
             
             # Build query
@@ -64,10 +64,10 @@ class LicensesCertificationsList(Resource):
             
             if candidate_id:
                 query = query.filter(CandidateLicensesCertifications.candidate_id == candidate_id)
-            if name:
-                query = query.filter(CandidateLicensesCertifications.name.ilike(f'%{name}%'))
-            if issuing_organization:
-                query = query.filter(CandidateLicensesCertifications.issuing_organization.ilike(f'%{issuing_organization}%'))
+            if license_certification_name:
+                query = query.filter(CandidateLicensesCertifications.license_certification_name.ilike(f'%{license_certification_name}%'))
+            if issuing_organisation:
+                query = query.filter(CandidateLicensesCertifications.issuing_organisation.ilike(f'%{issuing_organisation}%'))
             if is_active is not None:
                 query = query.filter(CandidateLicensesCertifications.is_active == is_active)
             
@@ -97,8 +97,8 @@ class LicensesCertificationsList(Resource):
             # Validate required fields
             if not data.get('candidate_id'):
                 licenses_certifications_ns.abort(400, 'candidate_id is required')
-            if not data.get('name'):
-                licenses_certifications_ns.abort(400, 'name is required')
+            if not data.get('license_certification_name'):
+                licenses_certifications_ns.abort(400, 'license_certification_name is required')
             
             # Verify candidate exists
             candidate = CandidateMasterProfile.query.get(data['candidate_id'])
@@ -107,28 +107,28 @@ class LicensesCertificationsList(Resource):
             
             # Parse dates if provided
             issue_date = None
-            expiration_date = None
+            expiry_date = None
             if data.get('issue_date'):
                 try:
                     issue_date = datetime.strptime(data['issue_date'], '%Y-%m-%d').date()
                 except ValueError:
                     licenses_certifications_ns.abort(400, 'issue_date must be in YYYY-MM-DD format')
             
-            if data.get('expiration_date'):
+            if data.get('expiry_date'):
                 try:
-                    expiration_date = datetime.strptime(data['expiration_date'], '%Y-%m-%d').date()
+                    expiry_date = datetime.strptime(data['expiry_date'], '%Y-%m-%d').date()
                 except ValueError:
-                    licenses_certifications_ns.abort(400, 'expiration_date must be in YYYY-MM-DD format')
+                    licenses_certifications_ns.abort(400, 'expiry_date must be in YYYY-MM-DD format')
             
             # Create new license/certification record
             record = CandidateLicensesCertifications(
                 candidate_id=data['candidate_id'],
-                name=data['name'],
-                issuing_organization=data.get('issuing_organization'),
+                license_certification_name=data['license_certification_name'],
+                issuing_organisation=data.get('issuing_organisation'),
                 issue_date=issue_date,
-                expiration_date=expiration_date,
-                credential_id=data.get('credential_id'),
-                credential_url=data.get('credential_url')
+                expiry_date=expiry_date,
+                is_no_expiry=data.get('is_no_expiry', False),
+                description=data.get('description')
             )
             
             db.session.add(record)
@@ -139,6 +139,10 @@ class LicensesCertificationsList(Resource):
         except Exception as e:
             db.session.rollback()
             licenses_certifications_ns.abort(500, str(e))
+
+    def options(self):
+        """Handle CORS preflight request"""
+        return '', 200
 
 @licenses_certifications_ns.route('/<int:record_id>')
 @licenses_certifications_ns.param('record_id', 'License/Certification ID')
@@ -174,16 +178,16 @@ class LicenseCertification(Resource):
                 except ValueError:
                     licenses_certifications_ns.abort(400, 'issue_date must be in YYYY-MM-DD format')
             
-            if 'expiration_date' in data and data['expiration_date']:
+            if 'expiry_date' in data and data['expiry_date']:
                 try:
-                    data['expiration_date'] = datetime.strptime(data['expiration_date'], '%Y-%m-%d').date()
+                    data['expiry_date'] = datetime.strptime(data['expiry_date'], '%Y-%m-%d').date()
                 except ValueError:
-                    licenses_certifications_ns.abort(400, 'expiration_date must be in YYYY-MM-DD format')
+                    licenses_certifications_ns.abort(400, 'expiry_date must be in YYYY-MM-DD format')
             
             # Update fields
             updatable_fields = [
-                'candidate_id', 'name', 'issuing_organization', 'issue_date', 
-                'expiration_date', 'credential_id', 'credential_url', 'is_active'
+                'candidate_id', 'license_certification_name', 'issuing_organisation', 'issue_date', 
+                'expiry_date', 'is_no_expiry', 'description', 'is_active'
             ]
             
             for field in updatable_fields:
@@ -257,11 +261,12 @@ class CandidateLicensesCertificationsList(Resource):
             if expired is not None:
                 today = datetime.utcnow().date()
                 if expired:
-                    query = query.filter(CandidateLicensesCertifications.expiration_date < today)
+                    query = query.filter(CandidateLicensesCertifications.expiry_date < today)
                 else:
                     query = query.filter(db.or_(
-                        CandidateLicensesCertifications.expiration_date >= today,
-                        CandidateLicensesCertifications.expiration_date.is_(None)
+                        CandidateLicensesCertifications.expiry_date >= today,
+                        CandidateLicensesCertifications.expiry_date.is_(None),
+                        CandidateLicensesCertifications.is_no_expiry == True
                     ))
             
             records = query.all()

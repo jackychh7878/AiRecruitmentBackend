@@ -136,7 +136,7 @@ api.add_namespace(candidate_profile_ns, path='/candidates')
 api.add_namespace(career_history_ns, path='/career-history')
 api.add_namespace(skills_ns, path='/skills')
 api.add_namespace(education_ns, path='/education')
-api.add_namespace(licenses_certifications_ns, path='/licenses-certifications')
+api.add_namespace(licenses_certifications_ns, path='/licenses_certifications')
 api.add_namespace(languages_ns, path='/languages')
 api.add_namespace(resume_ns, path='/resumes')
 api.add_namespace(lookup_ns, path='/lookups')
@@ -172,6 +172,20 @@ def health_check():
             'message': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+# Global OPTIONS handler for CORS preflight requests
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        origin = request.headers.get('Origin')
+        if origin in allowed_origins:
+            response = jsonify({'status': 'OK'})
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, PATCH, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = ', '.join(cors_headers)
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.status_code = 200
+            return response
 
 # Debug endpoint to see request headers (development only)
 @app.route('/api/debug/headers', methods=['GET', 'POST', 'OPTIONS'])
