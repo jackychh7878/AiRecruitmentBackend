@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Configure logging early so we can use logger everywhere
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Initialize Flask app
 app = Flask(__name__)
 
@@ -25,9 +29,25 @@ allowed_origins = [
     "http://localhost:3001",  # Alternative React port
 ]
 
-# Add production origins from environment if set
-if os.getenv('FRONTEND_URL'):
-    allowed_origins.append(os.getenv('FRONTEND_URL'))
+# Add frontend URLs from environment (supports multiple URLs, comma-separated)
+frontend_urls = os.getenv('FRONTEND_URL', '').strip()
+if frontend_urls:
+    for url in frontend_urls.split(','):
+        url = url.strip()
+        if url and url not in allowed_origins:
+            allowed_origins.append(url)
+            logger.info(f"Added frontend URL to CORS origins: {url}")
+
+# Add additional CORS origins from environment (comma-separated)
+additional_origins = os.getenv('ADDITIONAL_CORS_ORIGINS', '').strip()
+if additional_origins:
+    for origin in additional_origins.split(','):
+        origin = origin.strip()
+        if origin and origin not in allowed_origins:
+            allowed_origins.append(origin)
+            logger.info(f"Added additional CORS origin: {origin}")
+
+logger.info(f"CORS allowed origins: {allowed_origins}")
 
 # Comprehensive header list to handle all frontend requests
 cors_headers = [
@@ -90,9 +110,7 @@ from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
 with app.app_context():
     bulk_ai_regeneration_service.set_app(app)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Logging already configured at the top of the file
 
 # Environment-based configuration
 FLASK_ENV = os.getenv('FLASK_ENV', 'production')
