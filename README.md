@@ -40,6 +40,41 @@ chmod +x deploy-azure.sh
 
 For detailed deployment instructions, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md).
 
+## 🧠 Resume Parsing Engine
+
+This system includes an advanced resume parsing engine that supports three different parsing methods:
+
+### Parsing Methods
+
+| Method | Description | Best For | Requirements |
+|--------|-------------|----------|--------------|
+| **spacy** | Traditional NER using spaCy and NLTK | Lightweight, offline processing | `python -m spacy download en_core_web_sm` |
+| **azure_di** | Azure Document Intelligence | Complex PDF layouts, tables | Azure DI resource |
+| **langextract** | Google LangExtract + Azure OpenAI Fallback | Highest accuracy, AI understanding | Gemini API key OR Azure OpenAI |
+
+### Configuration
+
+Set the parsing method using environment variables:
+
+```bash
+# Choose parsing method: 'spacy', 'azure_di', or 'langextract'
+RESUME_PARSING_METHOD=spacy
+
+# For Azure Document Intelligence
+AZURE_DI_ENDPOINT=https://your-di-resource.cognitiveservices.azure.com/
+AZURE_DI_API_KEY=your_azure_di_api_key
+
+# For LangExtract (Option 1: Gemini API)
+LANGEXTRACT_API_KEY=your_google_gemini_api_key
+
+# For LangExtract (Option 2: Azure OpenAI fallback - uses existing credentials)
+AZURE_OPENAI_ENDPOINT=https://your-openai-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your_azure_openai_api_key
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+```
+
+For detailed setup instructions, see [RESUME_PARSING_CONFIGURATION.md](RESUME_PARSING_CONFIGURATION.md).
+
 ## Database Schema
 
 ### Main Tables

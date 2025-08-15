@@ -5,7 +5,7 @@ import nltk
 import os
 from io import BytesIO
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
@@ -21,6 +21,20 @@ try:
 except ImportError:
     AZURE_DI_AVAILABLE = False
 
+# LangExtract imports
+try:
+    import langextract as lx
+    LANGEXTRACT_AVAILABLE = True
+except ImportError:
+    LANGEXTRACT_AVAILABLE = False
+
+# Azure OpenAI imports for LangExtract
+try:
+    from openai import AzureOpenAI
+    AZURE_OPENAI_AVAILABLE = True
+except ImportError:
+    AZURE_OPENAI_AVAILABLE = False
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,28 +42,85 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Load environment variables
+load_dotenv()
+
 class ResumeParser:
     """
-    Resume parsing service using NER and PDF text extraction
-    Based on the methodology from: https://medium.com/pythons-gurus/performing-resum%C3%A9-analysis-using-ner-with-cosine-similarity-8eb99879cda4
+    Enhanced resume parsing service supporting multiple parsing methods:
+    - spacy: Traditional NER with spaCy and NLTK
+    - azure_di: Azure Document Intelligence
+    - langextract: Google LangExtract with Gemini API
     """
     
     def __init__(self):
-        """Initialize the resume parser with NLP models and entity patterns"""
-        # Check which parsing mode to use
-        self.use_azure_di = os.getenv('USE_AZURE_DOCUMENT_INTELLIGENCE', 'false').lower() == 'true'
+        """Initialize the resume parser with the selected parsing method"""
+        # Determine parsing method from environment variable
+        self.parsing_method = os.getenv('RESUME_PARSING_METHOD', 'spacy').lower()
         
-        if self.use_azure_di:
+        if self.parsing_method not in ['spacy', 'azure_di', 'langextract']:
+            logger.warning(f"Invalid parsing method '{self.parsing_method}', defaulting to 'spacy'")
+            self.parsing_method = 'spacy'
+        
+        logger.info(f"Initializing resume parser with method: {self.parsing_method}")
+        
+        # Initialize based on selected method
+        if self.parsing_method == 'langextract':
+            self._initialize_langextract()
+        elif self.parsing_method == 'azure_di':
             self._initialize_azure_di_client()
-            # Still need NLTK for text cleaning and summary extraction
-            self._initialize_nltk_data()
-        else:
-            self._initialize_nltk_data()
-            self.nlp = self._load_spacy_model()
-            self._setup_entity_ruler()
+        else:  # spacy
+            self._initialize_spacy()
             
+        # Always initialize NLTK for text cleaning
+        self._initialize_nltk_data()
         self.lemmatizer = WordNetLemmatizer()
         
+    def _initialize_langextract(self):
+        """Initialize LangExtract with fallback to Azure OpenAI"""
+        if not LANGEXTRACT_AVAILABLE:
+            raise ImportError("LangExtract not available. Please install: pip install langextract")
+            
+        if not AZURE_OPENAI_AVAILABLE:
+            raise ImportError("Azure OpenAI not available. Please install: pip install openai")
+            
+        # Check for Azure OpenAI environment variables (for fallback)
+        # Use the same environment variables as the existing AI service
+        required_vars = ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT_NAME']
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            raise ValueError(f"Missing required Azure OpenAI environment variables: {', '.join(missing_vars)}. Please set up Azure OpenAI resource.")
+            
+        try:
+            # Store Azure OpenAI configuration for fallback
+            # Use the same environment variables as the existing AI service
+            self.azure_openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+            self.azure_openai_api_key = os.getenv('AZURE_OPENAI_API_KEY')
+            self.azure_openai_model = os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME', 'gpt-4o-mini')
+            self.azure_openai_api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-01')
+            
+            # Create Azure OpenAI client for fallback
+            self.azure_openai_client = AzureOpenAI(
+                azure_endpoint=self.azure_openai_endpoint,
+                api_key=self.azure_openai_api_key,
+                api_version=self.azure_openai_api_version
+            )
+            
+            # Check if LANGEXTRACT_API_KEY is available for Gemini
+            langextract_api_key = os.getenv('LANGEXTRACT_API_KEY')
+            if langextract_api_key:
+                logger.info("LangExtract initialized with Gemini API key")
+                logger.info("Will use Gemini model with Azure OpenAI fallback")
+            else:
+                logger.info("LangExtract initialized without Gemini API key")
+                logger.info("Will use Azure OpenAI fallback for all extractions")
+                logger.info(f"Azure OpenAI deployment: {self.azure_openai_model}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize LangExtract: {str(e)}")
+            raise
+            
     def _initialize_azure_di_client(self):
         """Initialize Azure Document Intelligence client"""
         if not AZURE_DI_AVAILABLE:
@@ -75,7 +146,13 @@ class ResumeParser:
         except Exception as e:
             logger.error(f"Failed to initialize Azure Document Intelligence client: {str(e)}")
             raise
-        
+            
+    def _initialize_spacy(self):
+        """Initialize spaCy for NER"""
+        self._initialize_nltk_data()
+        self.nlp = self._load_spacy_model()
+        self._setup_entity_ruler()
+            
     def _initialize_nltk_data(self):
         """Download required NLTK data"""
         try:
@@ -165,7 +242,7 @@ class ResumeParser:
             
         except Exception as e:
             logger.error(f"Error setting up entity ruler: {str(e)}")
-            
+
     def extract_text_from_pdf(self, pdf_file) -> str:
         """
         Extract text from PDF file
@@ -202,7 +279,7 @@ class ResumeParser:
         except Exception as e:
             logger.error(f"Error extracting text from PDF: {str(e)}")
             raise ValueError(f"Failed to extract text from PDF: {str(e)}")
-            
+
     def clean_text(self, text: str) -> str:
         """
         Clean and preprocess text data
@@ -241,7 +318,7 @@ class ResumeParser:
         except Exception as e:
             logger.error(f"Error cleaning text: {str(e)}")
             return text  # Return original text if cleaning fails
-            
+
     def extract_contact_info(self, text: str) -> Dict[str, Optional[str]]:
         """Extract contact information from text"""
         contact_info = {
@@ -312,13 +389,15 @@ class ResumeParser:
         # Try to construct education records
         if schools or education_keywords:
             education_record = {
+                'candidate_id': 0,  # Will be set when saving to database
                 'school': schools[0] if schools else None,
                 'degree': education_keywords[0] if education_keywords else None,
                 'field_of_study': None,  # Could be enhanced with more sophisticated parsing
                 'start_date': None,
                 'end_date': years[-1] if years else None,  # Assume most recent year is graduation
                 'grade': None,
-                'description': None
+                'description': None,
+                'is_active': True
             }
             education_list.append(education_record)
             
@@ -355,15 +434,17 @@ class ResumeParser:
             for match in matches:
                 job_titles.append(match.group())
                 
-        # Create work experience records
+        # Create work experience records in the required format
         if companies or job_titles:
             for i, company in enumerate(companies[:3]):  # Limit to top 3 companies
                 experience_record = {
+                    'candidate_id': 0,  # Will be set when saving to database
                     'job_title': job_titles[i] if i < len(job_titles) else None,
                     'company_name': company,
                     'start_date': None,  # Could be enhanced with date parsing
                     'end_date': None,
-                    'description': None
+                    'description': None,
+                    'is_active': True
                 }
                 experience_list.append(experience_record)
                 
@@ -384,8 +465,10 @@ class ResumeParser:
         # Convert to list format expected by API
         for skill in extracted_skills:
             skills_list.append({
+                'candidate_id': 0,  # Will be set when saving to database
+                'career_history_id': 0,  # Will be set when linking to specific job
                 'skills': skill.title(),
-                'career_history_id': None
+                'is_active': True
             })
             
         return skills_list
@@ -419,8 +502,10 @@ class ResumeParser:
                         break
                         
                 languages_list.append({
+                    'candidate_id': 0,  # Will be set when saving to database
                     'language': language.title(),
-                    'proficiency_level': proficiency
+                    'proficiency_level': proficiency,
+                    'is_active': True
                 })
                 
         return languages_list
@@ -442,12 +527,14 @@ class ResumeParser:
             matches = re.finditer(pattern, text, re.IGNORECASE)
             for match in matches:
                 certifications_list.append({
+                    'candidate_id': 0,  # Will be set when saving to database
                     'name': match.group().title(),
                     'issuing_organization': None,
                     'issue_date': None,
                     'expiration_date': None,
                     'credential_id': None,
-                    'credential_url': None
+                    'credential_url': None,
+                    'is_active': True
                 })
                 
         return certifications_list
@@ -663,13 +750,15 @@ class ResumeParser:
             
             if schools or education_keywords:
                 education_record = {
+                    'candidate_id': 0,  # Will be set when saving to database
                     'school': schools[0] if schools else None,
                     'degree': education_keywords[0] if education_keywords else None,
                     'field_of_study': None,
                     'start_date': None,
                     'end_date': years[-1] if years else None,
                     'grade': None,
-                    'description': None
+                    'description': None,
+                    'is_active': True
                 }
                 education_list.append(education_record)
                 
@@ -714,11 +803,13 @@ class ResumeParser:
             if companies or job_titles:
                 for i, company in enumerate(companies[:3]):
                     experience_record = {
+                        'candidate_id': 0,  # Will be set when saving to database
                         'job_title': job_titles[i] if i < len(job_titles) else None,
                         'company_name': company,
                         'start_date': None,
                         'end_date': None,
-                        'description': None
+                        'description': None,
+                        'is_active': True
                     }
                     experience_list.append(experience_record)
                     
@@ -749,8 +840,10 @@ class ResumeParser:
             # Convert to expected format
             for skill in extracted_skills:
                 skills_list.append({
+                    'candidate_id': 0,  # Will be set when saving to database
+                    'career_history_id': 0,  # Will be set when linking to specific job
                     'skills': skill.title(),
-                    'career_history_id': None
+                    'is_active': True
                 })
                 
         return skills_list
@@ -780,8 +873,10 @@ class ResumeParser:
                             break
                             
                     languages_list.append({
+                        'candidate_id': 0,  # Will be set when saving to database
                         'language': language.title(),
-                        'proficiency_level': proficiency
+                        'proficiency_level': proficiency,
+                        'is_active': True
                     })
                     
         return languages_list
@@ -804,12 +899,14 @@ class ResumeParser:
                 matches = re.finditer(pattern, content, re.IGNORECASE)
                 for match in matches:
                     certifications_list.append({
+                        'candidate_id': 0,  # Will be set when saving to database
                         'name': match.group().title(),
                         'issuing_organization': None,
                         'issue_date': None,
                         'expiration_date': None,
                         'credential_id': None,
-                        'credential_url': None
+                        'credential_url': None,
+                        'is_active': True
                     })
                     
         return certifications_list
@@ -974,9 +1071,282 @@ class ResumeParser:
             logger.error(f"Error extracting summary section: {str(e)}")
             return None
         
+    def _create_langextract_examples(self) -> List[Dict[str, Any]]:
+        """Create examples for LangExtract resume parsing"""
+        return [
+            {
+                "full_name": "John Smith",
+                "email": "john.smith@email.com",
+                "phone": "+1-555-123-4567",
+                "location": "San Francisco, CA",
+                "summary": "Experienced software engineer with 5+ years in full-stack development",
+                "education": {
+                    "degree": "Bachelor of Science in Computer Science",
+                    "school": "Stanford University",
+                    "graduation_year": "2018"
+                },
+                "work_experience": [
+                    {
+                        "title": "Senior Software Engineer",
+                        "company": "Tech Corp",
+                        "duration": "2020-2023",
+                        "description": "Led development of microservices architecture"
+                    }
+                ],
+                "skills": ["Python", "JavaScript", "React", "AWS", "Docker"],
+                "languages": [
+                    {"language": "English", "proficiency": "Native"},
+                    {"language": "Spanish", "proficiency": "Intermediate"}
+                ],
+                "certifications": ["AWS Certified Developer", "Google Cloud Professional"]
+            }
+        ]
+
+    def _parse_resume_with_langextract(self, pdf_file) -> Dict[str, Any]:
+        """Parse resume using LangExtract with Azure OpenAI"""
+        try:
+            # Extract text from PDF
+            text = self.extract_text_from_pdf(pdf_file)
+            
+            # Define extraction prompt
+            prompt_description = """
+            Extract comprehensive resume information from the provided text. Focus on:
+            1. Personal Information: Full name, email, phone number, location
+            2. Professional Summary: Brief career overview or objective
+            3. Education: Degrees, schools, graduation years, fields of study
+            4. Work Experience: Job titles, companies, dates, descriptions
+            5. Skills: Technical and soft skills
+            6. Languages: Languages spoken and proficiency levels
+            7. Certifications: Professional certifications and licenses
+            
+            Be thorough and accurate in extraction. If information is not clearly stated, 
+            use reasonable inference based on context.
+            """
+            
+            # Create examples for better extraction
+            examples = self._create_langextract_examples()
+            
+            # Use LangExtract with Azure OpenAI
+            logger.info("Starting LangExtract extraction with Azure OpenAI")
+            
+            try:
+                # Try to use LangExtract with default Gemini model
+                # If LANGEXTRACT_API_KEY is not set, this will fail and we'll use Azure OpenAI fallback
+                result = lx.extract(
+                    text_or_documents=text,
+                    prompt_description=prompt_description,
+                    examples=examples,
+                    model_id="gemini-2.5-flash",  # Use default Gemini model
+                    max_workers=1,
+                    extraction_passes=2  # Multiple passes for better accuracy
+                )
+                
+                # Convert LangExtract result to standardized format
+                return self._convert_langextract_result(result, text)
+                
+            except Exception as langextract_error:
+                logger.warning(f"LangExtract failed: {langextract_error}")
+                
+                # Check if it's an API key issue
+                if "api" in str(langextract_error).lower() or "key" in str(langextract_error).lower():
+                    logger.info("LangExtract failed due to API key issue, using Azure OpenAI fallback")
+                else:
+                    logger.info("LangExtract failed, falling back to direct Azure OpenAI extraction")
+                
+                # Fallback: Use direct Azure OpenAI if LangExtract fails
+                return self._extract_with_azure_openai_direct(text)
+            
+        except Exception as e:
+            logger.error(f"Error parsing resume with LangExtract: {str(e)}")
+            raise
+    
+
+
+    def _convert_langextract_result(self, langextract_result: Any, original_text: str) -> Dict[str, Any]:
+        """Convert LangExtract result to standardized format"""
+        try:
+            # Extract the first result if multiple results
+            if hasattr(langextract_result, 'results') and langextract_result.results:
+                extracted_data = langextract_result.results[0]
+            else:
+                extracted_data = langextract_result
+            
+            # Parse name
+            full_name = extracted_data.get('full_name', '')
+            name_parts = full_name.split() if full_name else []
+            first_name = name_parts[0] if name_parts else None
+            last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else None
+            
+            # Parse education
+            education_list = []
+            education_data = extracted_data.get('education', {})
+            if education_data:
+                education_record = {
+                    'candidate_id': 0,  # Will be set when saving to database
+                    'school': education_data.get('school'),
+                    'degree': education_data.get('degree'),
+                    'field_of_study': education_data.get('field_of_study'),
+                    'start_date': None,
+                    'end_date': education_data.get('graduation_year'),
+                    'grade': None,
+                    'description': None,
+                    'is_active': True
+                }
+                education_list.append(education_record)
+            
+            # Parse work experience
+            career_history = []
+            work_exp = extracted_data.get('work_experience', [])
+            for exp in work_exp:
+                career_record = {
+                    'candidate_id': 0,  # Will be set when saving to database
+                    'job_title': exp.get('title'),
+                    'company_name': exp.get('company'),
+                    'start_date': None,
+                    'end_date': None,
+                    'description': exp.get('description'),
+                    'is_active': True
+                }
+                # Parse duration if available
+                duration = exp.get('duration', '')
+                if duration:
+                    # Try to extract start and end dates from duration
+                    date_matches = re.findall(r'\b(19|20)\d{2}\b', duration)
+                    if len(date_matches) >= 2:
+                        career_record['start_date'] = date_matches[0]
+                        career_record['end_date'] = date_matches[1]
+                    elif len(date_matches) == 1:
+                        career_record['start_date'] = date_matches[0]
+                        
+                career_history.append(career_record)
+            
+            # Parse skills
+            skills_list = []
+            skills = extracted_data.get('skills', [])
+            for skill in skills:
+                skills_list.append({
+                    'candidate_id': 0,  # Will be set when saving to database
+                    'career_history_id': 0,  # Will be set when linking to specific job
+                    'skills': skill,
+                    'is_active': True
+                })
+            
+            # Parse languages
+            languages_list = []
+            languages = extracted_data.get('languages', [])
+            for lang in languages:
+                if isinstance(lang, dict):
+                    languages_list.append({
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'language': lang.get('language'),
+                        'proficiency_level': lang.get('proficiency', 'Intermediate'),
+                        'is_active': True
+                    })
+                else:
+                    languages_list.append({
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'language': lang,
+                        'proficiency_level': 'Intermediate',
+                        'is_active': True
+                    })
+            
+            # Parse certifications
+            certifications_list = []
+            certifications = extracted_data.get('certifications', [])
+            for cert in certifications:
+                certifications_list.append({
+                    'candidate_id': 0,  # Will be set when saving to database
+                    'name': cert,
+                    'issuing_organization': None,
+                    'issue_date': None,
+                    'expiration_date': None,
+                    'credential_id': None,
+                    'credential_url': None,
+                    'is_active': True
+                })
+            
+            # Structure the response
+            parsed_data = {
+                'first_name': first_name,
+                'last_name': last_name,
+                'email': extracted_data.get('email'),
+                'location': extracted_data.get('location'),
+                'phone_number': extracted_data.get('phone'),
+                'personal_summary': extracted_data.get('summary'),
+                'availability_weeks': 0,
+                'preferred_work_types': None,
+                'right_to_work': True,
+                'salary_expectation': 0,
+                'classification_of_interest': None,
+                'sub_classification_of_interest': None,
+                'citizenship': None,
+                'is_active': True,
+                # Relationship data
+                'career_history': career_history,
+                'skills': skills_list,
+                'education': education_list,
+                'licenses_certifications': certifications_list,
+                'languages': languages_list,
+                'resumes': [],
+                'resume_file': {}
+            }
+            
+            logger.info("Successfully converted LangExtract result to standardized format")
+            return parsed_data
+            
+        except Exception as e:
+            logger.error(f"Error converting LangExtract result: {str(e)}")
+            # Fallback to basic extraction if conversion fails
+            return self._fallback_extraction(original_text)
+
+    def _fallback_extraction(self, text: str) -> Dict[str, Any]:
+        """Fallback extraction using basic regex patterns"""
+        # Basic contact info extraction
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, text)
+        
+        phone_patterns = [
+            r'\+?\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}',
+            r'\(\d{3}\)\s*\d{3}-\d{4}',
+            r'\d{3}-\d{3}-\d{4}',
+            r'\d{10,}'
+        ]
+        
+        phone = None
+        for pattern in phone_patterns:
+            phones = re.findall(pattern, text)
+            if phones:
+                phone = re.sub(r'[^\d+]', '', phones[0])
+                if len(phone) >= 10:
+                    break
+        
+        return {
+            'first_name': None,
+            'last_name': None,
+            'email': emails[0] if emails else None,
+            'location': None,
+            'phone_number': phone,
+            'personal_summary': None,
+            'availability_weeks': 0,
+            'preferred_work_types': None,
+            'right_to_work': True,
+            'salary_expectation': 0,
+            'classification_of_interest': None,
+            'sub_classification_of_interest': None,
+            'citizenship': None,
+            'is_active': True,
+            'career_history': [],
+            'skills': [],
+            'education': [],
+            'licenses_certifications': [],
+            'languages': [],
+            'resumes': [],
+            'resume_file': {}
+        }
+
     def parse_resume(self, pdf_file) -> Dict[str, Any]:
         """
-        Main method to parse resume and extract structured information
+        Main method to parse resume using the configured parsing method
         
         Args:
             pdf_file: PDF file object
@@ -985,13 +1355,26 @@ class ResumeParser:
             Dict containing extracted candidate information
         """
         try:
-            if self.use_azure_di:
+            logger.info(f"Parsing resume using method: {self.parsing_method}")
+            
+            if self.parsing_method == 'langextract':
+                return self._parse_resume_with_langextract(pdf_file)
+            elif self.parsing_method == 'azure_di':
                 return self._parse_resume_with_azure_di(pdf_file)
-            else:
+            else:  # spacy
                 return self._parse_resume_with_spacy(pdf_file)
                 
         except Exception as e:
-            logger.error(f"Error parsing resume: {str(e)}")
+            logger.error(f"Error parsing resume with {self.parsing_method}: {str(e)}")
+            # Try fallback methods if primary method fails
+            if self.parsing_method != 'spacy':
+                logger.info("Attempting fallback to spacy method")
+                try:
+                    self._initialize_spacy()
+                    return self._parse_resume_with_spacy(pdf_file)
+                except Exception as fallback_error:
+                    logger.error(f"Fallback also failed: {str(fallback_error)}")
+            
             raise ValueError(f"Failed to parse resume: {str(e)}")
     
     def _parse_resume_with_azure_di(self, pdf_file) -> Dict[str, Any]:
@@ -1038,12 +1421,13 @@ class ResumeParser:
                 'location': location,
                 'phone_number': contact_info.get('phone_number'),
                 'personal_summary': personal_summary,
-                'availability_weeks': None,
+                'availability_weeks': 0,
                 'preferred_work_types': None,
-                'right_to_work': None,
-                'salary_expectation': None,
+                'right_to_work': True,
+                'salary_expectation': 0,
                 'classification_of_interest': None,
                 'sub_classification_of_interest': None,
+                'citizenship': None,
                 'is_active': True,
                 # Relationship data
                 'career_history': career_history,
@@ -1051,7 +1435,8 @@ class ResumeParser:
                 'education': education,
                 'licenses_certifications': licenses_certifications,
                 'languages': languages,
-                'resumes': []  # Will be populated when resume is saved
+                'resumes': [],  # Will be populated when resume is saved
+                'resume_file': {}
             }
             
             logger.info("Successfully parsed resume using Azure Document Intelligence")
@@ -1072,6 +1457,8 @@ class ResumeParser:
             
             # Process with spaCy for NER
             doc = self.nlp(raw_text)  # Use raw text for NER to preserve formatting
+
+            print(doc)
             
             # Extract name (assume first PERSON entity is the candidate's name)
             first_name = None
@@ -1383,8 +1770,10 @@ class ResumeParser:
                                             break
                                     
                                     languages_list.append({
+                                        'candidate_id': 0,  # Will be set when saving to database
                                         'language': lang.title(),
-                                        'proficiency_level': proficiency
+                                        'proficiency_level': proficiency,
+                                        'is_active': True
                                     })
         
         return languages_list
@@ -1527,6 +1916,184 @@ class ResumeParser:
             'location': None,
             'summary': None
         }
+
+    def _extract_with_azure_openai_direct(self, text: str) -> Dict[str, Any]:
+        """Direct extraction using Azure OpenAI when LangExtract fails"""
+        try:
+            # Create structured prompt for direct extraction
+            prompt = f"""
+            Extract the following information from this resume text and return it in JSON format:
+
+            Resume Text:
+            {text}
+
+            Please extract:
+            1. full_name: The person's complete name
+            2. email: Email address
+            3. phone: Phone number (clean format)
+            4. location: Current location/address
+            5. summary: Professional summary or objective
+            6. education: Array of education records with degree, school, graduation_year
+            7. work_experience: Array of work experience with title, company, duration, description
+            8. skills: Array of technical and professional skills
+            9. languages: Array of languages with proficiency
+            10. certifications: Array of certifications and licenses
+
+            Return ONLY valid JSON without any additional text or markdown formatting.
+            """
+
+            response = self.azure_openai_client.chat.completions.create(
+                model=self.azure_openai_model,
+                messages=[
+                    {"role": "system", "content": "You are an expert at extracting structured information from resumes. Extract the requested information accurately and completely."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=2000
+            )
+
+            # Parse the JSON response
+            result_text = response.choices[0].message.content
+            
+            # Clean up the response (remove markdown if present)
+            if "```json" in result_text:
+                result_text = result_text.split("```json")[1].split("```")[0]
+            elif "```" in result_text:
+                result_text = result_text.split("```")[1].split("```")[0]
+            
+            import json
+            extracted_data = json.loads(result_text.strip())
+            
+            # Convert to standardized format
+            return self._convert_direct_extraction_result(extracted_data, text)
+            
+        except Exception as e:
+            logger.error(f"Direct Azure OpenAI extraction failed: {str(e)}")
+            # Final fallback to basic text extraction
+            return self._fallback_extraction(text)
+    
+    def _convert_direct_extraction_result(self, extracted_data: Dict[str, Any], original_text: str) -> Dict[str, Any]:
+        """Convert direct Azure OpenAI extraction result to standardized format"""
+        try:
+            # Parse name
+            full_name = extracted_data.get('full_name', '')
+            name_parts = full_name.split() if full_name else []
+            first_name = name_parts[0] if name_parts else None
+            last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else None
+            
+            # Parse education
+            education_list = []
+            education_data = extracted_data.get('education', [])
+            if isinstance(education_data, list):
+                for edu in education_data:
+                    education_record = {
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'school': edu.get('school'),
+                        'degree': edu.get('degree'),
+                        'field_of_study': edu.get('field_of_study'),
+                        'start_date': None,
+                        'end_date': edu.get('graduation_year'),
+                        'grade': None,
+                        'description': None,
+                        'is_active': True
+                    }
+                    education_list.append(education_record)
+            
+            # Parse work experience
+            career_history = []
+            work_exp = extracted_data.get('work_experience', [])
+            if isinstance(work_exp, list):
+                for exp in work_exp:
+                    career_record = {
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'job_title': exp.get('title'),
+                        'company_name': exp.get('company'),
+                        'start_date': exp.get('start_date'),
+                        'end_date': exp.get('end_date'),
+                        'description': exp.get('description'),
+                        'is_active': True
+                    }
+                    career_history.append(career_record)
+            
+            # Parse skills
+            skills_list = []
+            skills_data = extracted_data.get('skills', [])
+            if isinstance(skills_data, list):
+                for skill in skills_data:
+                    if isinstance(skill, str):
+                        skills_list.append({
+                            'candidate_id': 0,  # Will be set when saving to database
+                            'career_history_id': 0,  # Will be set when linking to specific job
+                            'skills': skill,
+                            'is_active': True
+                        })
+            
+            # Parse languages
+            languages_list = []
+            languages_data = extracted_data.get('languages', [])
+            if isinstance(languages_data, list):
+                for lang in languages_data:
+                    if isinstance(lang, str):
+                        languages_list.append({
+                            'candidate_id': 0,  # Will be set when saving to database
+                            'language': lang,
+                            'proficiency_level': None,
+                            'is_active': True
+                        })
+                    elif isinstance(lang, dict):
+                        languages_list.append({
+                            'candidate_id': 0,  # Will be set when saving to database
+                            'language': lang.get('language'),
+                            'proficiency_level': lang.get('proficiency'),
+                            'is_active': True
+                        })
+            
+            # Parse certifications
+            certifications_list = []
+            cert_data = extracted_data.get('certifications', [])
+            if isinstance(cert_data, list):
+                for cert in cert_data:
+                    if isinstance(cert, str):
+                        certifications_list.append({
+                            'candidate_id': 0,  # Will be set when saving to database
+                            'name': cert,
+                            'issuing_organization': None,
+                            'issue_date': None,
+                            'expiration_date': None,
+                            'credential_id': None,
+                            'credential_url': None,
+                            'is_active': True
+                        })
+            
+            # Create standardized result
+            return {
+                'first_name': first_name,
+                'last_name': last_name,
+                'email': extracted_data.get('email'),
+                'location': extracted_data.get('location'),
+                'phone_number': extracted_data.get('phone'),
+                'personal_summary': extracted_data.get('summary'),
+                'availability_weeks': 0,
+                'preferred_work_types': None,
+                'right_to_work': True,
+                'salary_expectation': 0,
+                'classification_of_interest': None,
+                'sub_classification_of_interest': None,
+                'citizenship': None,
+                'is_active': True,
+                'career_history': career_history,
+                'skills': skills_list,
+                'education': education_list,
+                'licenses_certifications': certifications_list,
+                'languages': languages_list,
+                'resumes': [],
+                'resume_file': {}
+            }
+            
+        except Exception as e:
+            logger.error(f"Error converting direct extraction result: {str(e)}")
+            # Final fallback
+            return self._fallback_extraction(original_text)
 
 # Global instance - created lazily to pick up environment variable changes
 _resume_parser_instance = None
