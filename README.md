@@ -38,7 +38,7 @@ chmod +x deploy-azure.sh
 ./deploy-azure.sh
 ```
 
-For detailed deployment instructions, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md).
+For detailed deployment instructions, see [DOCKER_DEPLOYMENT.md](doc/DOCKER_DEPLOYMENT.md).
 
 ## 🧠 Resume Parsing Engine
 
@@ -73,7 +73,7 @@ AZURE_OPENAI_API_KEY=your_azure_openai_api_key
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
 ```
 
-For detailed setup instructions, see [RESUME_PARSING_CONFIGURATION.md](RESUME_PARSING_CONFIGURATION.md).
+For detailed setup instructions, see [RESUME_PARSING_CONFIGURATION.md](doc/RESUME_PARSING_CONFIGURATION.md).
 
 ## Database Schema
 
