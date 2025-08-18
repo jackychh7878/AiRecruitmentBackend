@@ -1,286 +1,381 @@
-# AI Recruitment Backend Database Schema
+# AI Recruitment Backend
 
-This repository contains the PostgreSQL database schema for an AI-powered recruitment system designed to manage candidate profiles comprehensively.
+An intelligent recruitment management system that leverages AI-powered resume parsing, semantic search, and candidate profiling to streamline the hiring process.
 
-## Overview
+## 🚀 Features
 
-The database is designed to store detailed candidate information including personal details, career history, skills, education, certifications, languages, and resume files. It supports AI/ML capabilities through embedding vectors and includes proper indexing for efficient querying.
+### Core Functionality
+- **Candidate Profile Management** - Complete CRUD operations for candidate profiles
+- **AI-Powered Resume Parsing** - Extract structured data from PDF resumes using multiple parsing methods
+- **Semantic Search** - Find candidates using natural language queries with vector embeddings
+- **AI Summary Generation** - Generate intelligent candidate summaries using Azure OpenAI
+- **Skills & Experience Tracking** - Manage career history, skills, education, certifications, and languages
 
-## 🐳 Docker Deployment
+### AI & Machine Learning
+- **Vector Embeddings** - Generate semantic embeddings for candidate profiles using Azure OpenAI
+- **Hybrid Search** - Combine semantic similarity with keyword matching for optimal results
+- **Multiple Parsing Methods** - Support for spaCy NLP, Azure Document Intelligence, and LangExtract
+- **Bulk AI Processing** - Regenerate AI summaries and embeddings for all candidates with job monitoring
 
-### Quick Start with Docker
+### Technical Features
+- **RESTful API** - Comprehensive REST API with Swagger documentation
+- **PostgreSQL Database** - Robust data storage with pgvector extension for embeddings
+- **Docker Support** - Containerized deployment with multi-stage builds
+- **CORS Configuration** - Proper CORS handling for frontend integration
+- **Health Monitoring** - Health check endpoints and error handling
 
+## 🛠️ Technology Stack
+
+- **Backend Framework**: Flask with Flask-RESTX
+- **Database**: PostgreSQL with pgvector extension
+- **AI/ML**: Azure OpenAI (GPT-4o-mini, text-embedding-3-small)
+- **NLP Processing**: spaCy, NLTK, LangChain
+- **Resume Parsing**: PyPDF2, Azure Document Intelligence, LangExtract
+- **Deployment**: Docker, Gunicorn
+- **Development**: Python 3.11+
+
+## 📋 Prerequisites
+
+- Python 3.11+
+- PostgreSQL with pgvector extension
+- Azure OpenAI Service account
+- Docker (optional, for containerized deployment)
+
+## ⚙️ Installation
+
+### 1. Clone the Repository
 ```bash
-# Build and run the application
-chmod +x build-and-run.sh
-./build-and-run.sh
+git clone <repository-url>
+cd AiRecruitmentBackend
 ```
 
-### Manual Docker Commands
-
+### 2. Set Up Virtual Environment
 ```bash
-# Build the image
-docker build -t ai-recruitment-backend .
-
-# Run the container
-docker run -d \
-  --name ai-recruitment-backend \
-  -p 5000:5000 \
-  --env-file .env \
-  ai-recruitment-backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-### Azure Container Apps Deployment
-
+### 3. Install Dependencies
 ```bash
-# Deploy to Azure Container Apps
-chmod +x deploy-azure.sh
-./deploy-azure.sh
+pip install -r requirements.txt
 ```
 
-For detailed deployment instructions, see [DOCKER_DEPLOYMENT.md](doc/DOCKER_DEPLOYMENT.md).
-
-## 🧠 Resume Parsing Engine
-
-This system includes an advanced resume parsing engine that supports three different parsing methods:
-
-### Parsing Methods
-
-| Method | Description | Best For | Requirements |
-|--------|-------------|----------|--------------|
-| **spacy** | Traditional NER using spaCy and NLTK | Lightweight, offline processing | `python -m spacy download en_core_web_sm` |
-| **azure_di** | Azure Document Intelligence | Complex PDF layouts, tables | Azure DI resource |
-| **langextract** | Google LangExtract + Azure OpenAI Fallback | Highest accuracy, AI understanding | Gemini API key OR Azure OpenAI |
-
-### Configuration
-
-Set the parsing method using environment variables:
-
+### 4. Download NLP Models
 ```bash
-# Choose parsing method: 'spacy', 'azure_di', or 'langextract'
+# Download spaCy model
+python -m spacy download en_core_web_sm
+
+# Download NLTK data
+python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet')"
+```
+
+### 5. Database Setup
+```bash
+# Create PostgreSQL database and enable pgvector
+createdb ai_recruitment_db
+psql ai_recruitment_db -c "CREATE EXTENSION vector;"
+
+# Run database schema
+psql ai_recruitment_db < database_schema.sql
+
+# (Optional) Load sample data
+psql ai_recruitment_db < sample_data.sql
+```
+
+### 6. Environment Configuration
+Create a `.env` file in the root directory:
+
+```env
+# Database Configuration
+DATABASE_URL=postgresql://username:password@localhost:5432/ai_recruitment_db
+
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your_azure_openai_key
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+AZURE_OPENAI_API_VERSION=2024-02-01
+
+# Resume Parsing Method (spacy, azure_di, or langextract)
 RESUME_PARSING_METHOD=spacy
 
-# For Azure Document Intelligence
+# Optional: Azure Document Intelligence (for azure_di method)
 AZURE_DI_ENDPOINT=https://your-di-resource.cognitiveservices.azure.com/
 AZURE_DI_API_KEY=your_azure_di_api_key
 
-# For LangExtract (Option 1: Gemini API)
-LANGEXTRACT_API_KEY=your_google_gemini_api_key
-
-# For LangExtract (Option 2: Azure OpenAI fallback - uses existing credentials)
-AZURE_OPENAI_ENDPOINT=https://your-openai-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your_azure_openai_api_key
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+# Application Configuration
+FLASK_ENV=development
+FLASK_DEBUG=true
+FRONTEND_URL=http://localhost:3000
 ```
 
-For detailed setup instructions, see [RESUME_PARSING_CONFIGURATION.md](doc/RESUME_PARSING_CONFIGURATION.md).
+## 🚀 Running the Application
 
-## Database Schema
+### Development Mode
+```bash
+# Start the Flask development server
+python app.py
+```
 
-### Main Tables
+### Production Mode
+```bash
+# Using Gunicorn
+gunicorn -w 4 -b 0.0.0.0:5000 app:app
 
-#### 1. `candidate_master_profile`
-The central table containing candidate personal information and AI-generated summaries.
+# Or use the startup script
+chmod +x start.sh
+./start.sh
+```
 
-**Key Features:**
-- Simple auto-incrementing integer primary keys (SERIAL)
-- Email uniqueness constraint
-- Support for 1536-dimension embedding vectors (OpenAI compatible)
-- JSONB metadata field for flexible data storage
-- Automatic timestamp management
+### Docker Deployment
+```bash
+# Build the Docker image
+docker build -t ai-recruitment-backend .
 
-#### 2. Related Tables (One-to-Many relationships)
+# Run the container
+docker run -p 5000:5000 --env-file .env ai-recruitment-backend
+```
 
-- **`candidate_career_history`** - Employment history with support for current roles
-- **`candidate_skills`** - Skills linked to candidates and optionally to specific career history
-- **`candidate_education`** - Educational background and qualifications
-- **`candidate_licenses_certifications`** - Professional licenses and certifications
-- **`candidate_languages`** - Language proficiencies with levels
-- **`candidate_resume`** - Azure blob storage references for resume files
+The application will be available at `http://localhost:5000`
 
-#### 3. Lookup Table
+## 📚 API Documentation
 
-- **`ai_recruitment_com_code`** - Configurable codes for work types, classifications, etc.
+### Interactive Documentation
+- **Swagger UI**: `http://localhost:5000/swagger/`
+- **Health Check**: `http://localhost:5000/api/health`
 
-## Features
+### Key Endpoints
 
-### 🚀 Performance Optimizations
-- Comprehensive indexing strategy
-- Vector similarity search support (pgvector)
-- Efficient foreign key relationships
-- Optimized for common query patterns
+#### Candidate Management
+- `GET /api/candidates` - List all candidates with pagination
+- `POST /api/candidates` - Create new candidate
+- `GET /api/candidates/{id}` - Get candidate by ID
+- `PATCH /api/candidates/{id}` - Update candidate
+- `DELETE /api/candidates/{id}` - Delete candidate
 
-### 🔄 Data Integrity
-- Foreign key constraints with CASCADE deletes
-- Unique constraints where appropriate
-- Automatic timestamp updates via triggers
-- Boolean flags for soft deletes (`is_active`)
+#### Semantic Search
+- `POST /api/candidates/semantic-search` - Search candidates using natural language
+- `GET /api/candidates/semantic-search/statistics` - Get search statistics
 
-### 🤖 AI/ML Ready
-- Embedding vector storage (1536 dimensions)
-- JSONB metadata fields
-- AI-generated summary fields
-- Flexible classification system
+#### Resume Management
+- `POST /api/candidates/{id}/resumes` - Upload resume
+- `GET /api/candidates/resumes/{id}/download` - Download resume
+- `POST /api/candidates/parse-resume` - Parse resume and extract data
 
-### 📊 Analytics Friendly
-- Created/modified date tracking
-- Soft delete support
-- Comprehensive candidate profiling
-- Relationship tracking between skills and career history
+#### AI Services
+- `POST /api/candidates/ai-summary/bulk-regenerate` - Start bulk AI regeneration
+- `GET /api/candidates/ai-summary/bulk-regenerate/jobs/{job_id}` - Monitor job status
 
-## Prerequisites
+For complete API documentation, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md)
 
-1. **PostgreSQL 12+** with the following extensions:
-   - `vector` (pgvector for embedding storage)
+## 🔍 Usage Examples
 
-2. **pgvector Extension**
+### Semantic Search
+```bash
+curl -X POST http://localhost:5000/api/candidates/semantic-search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Python developer with machine learning experience",
+    "confidence_threshold": 0.7,
+    "max_results": 20,
+    "include_relationships": true
+  }'
+```
+
+### Upload and Parse Resume
+```bash
+curl -X POST http://localhost:5000/api/candidates/parse-resume \
+  -F "resume_file=@resume.pdf"
+```
+
+### Create Candidate Profile
+```bash
+curl -X POST http://localhost:5000/api/candidates \
+  -H "Content-Type: application/json" \
+  -d '{
+    "first_name": "John",
+    "last_name": "Doe",
+    "email": "john.doe@email.com",
+    "location": "New York, NY",
+    "skills": [{"skills": "Python, Machine Learning, SQL"}]
+  }'
+```
+
+## 🔧 Configuration
+
+### Resume Parsing Methods
+1. **spaCy (Default)** - Fast, local NLP processing
+2. **Azure Document Intelligence** - Cloud-based document analysis
+3. **LangExtract** - LLM-powered extraction using Azure OpenAI
+
+Configure via `RESUME_PARSING_METHOD` environment variable.
+
+### Semantic Search Configuration
+- `SEMANTIC_SEARCH_SEMANTIC_WEIGHT` - Weight for semantic similarity (default: 0.7)
+- Keyword weight is automatically calculated as (1.0 - semantic_weight)
+
+### AI Service Configuration
+- `AI_BULK_MAX_CONCURRENT_WORKERS` - Maximum parallel workers for bulk operations (default: 5)
+
+## 🐳 Docker Deployment
+
+### Build and Run
+```bash
+# Build image
+docker build -t ai-recruitment-backend .
+
+# Run with environment file
+docker run -p 5000:5000 --env-file .env ai-recruitment-backend
+
+# Run with inline environment variables
+docker run -p 5000:5000 \
+  -e DATABASE_URL="your_db_url" \
+  -e AZURE_OPENAI_ENDPOINT="your_endpoint" \
+  -e AZURE_OPENAI_API_KEY="your_key" \
+  ai-recruitment-backend
+```
+
+### Docker Compose (with PostgreSQL)
+```yaml
+version: '3.8'
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ai_recruitment_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database_schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/ai_recruitment_db
+      - AZURE_OPENAI_ENDPOINT=your_endpoint
+      - AZURE_OPENAI_API_KEY=your_key
+    depends_on:
+      - db
+    volumes:
+      - ./logs:/app/logs
+
+volumes:
+  postgres_data:
+```
+
+## 🧪 Testing
+
+### Run Test Suite
+```bash
+# Individual tests
+python test_case/test_resume_parser.py
+python test_case/test_semantic_search.py
+python test_case/test_ai_summary.py
+
+# Database tests
+python test_case/test_db_connection.py
+```
+
+### Health Check
+```bash
+curl http://localhost:5000/api/health
+```
+
+## 📁 Project Structure
+
+```
+AiRecruitmentBackend/
+├── app.py                    # Main Flask application
+├── database.py              # Database configuration
+├── models.py                # SQLAlchemy models
+├── requirements.txt         # Python dependencies
+├── Dockerfile               # Docker configuration
+├── start.sh                 # Startup script
+├── database_schema.sql      # Database schema
+├── routes/                  # API route definitions
+│   ├── candidate_profile_routes.py
+│   ├── resume_routes.py
+│   └── ...
+├── services/                # Business logic services
+│   ├── resume_parser.py
+│   ├── ai_summary_service.py
+│   ├── semantic_search_service.py
+│   └── bulk_ai_regeneration_service.py
+├── test_case/              # Test files
+├── doc/                    # Documentation
+└── docker_build_script/    # Deployment scripts
+```
+
+## 🔐 Security Considerations
+
+- **Environment Variables**: Store sensitive data in `.env` files, not in code
+- **CORS Configuration**: Properly configured for frontend domains
+- **Input Validation**: API endpoints validate all input data
+- **File Upload Security**: PDF validation and size limits for resume uploads
+- **Rate Limiting**: Built-in rate limiting for AI service calls
+
+## 🚨 Troubleshooting
+
+### Common Issues
+
+1. **Database Connection Error**
    ```bash
-   # Install pgvector (varies by system)
-   # For Ubuntu/Debian:
-   sudo apt install postgresql-15-pgvector
-   
-   # For macOS with Homebrew:
-   brew install pgvector
+   # Check PostgreSQL is running and pgvector is installed
+   psql -c "SELECT * FROM pg_extension WHERE extname = 'vector';"
    ```
 
-## Setup Instructions
+2. **Azure OpenAI API Error**
+   ```bash
+   # Verify environment variables
+   echo $AZURE_OPENAI_ENDPOINT
+   echo $AZURE_OPENAI_API_KEY
+   ```
 
-### 1. Create Database
-```sql
-CREATE DATABASE ai_recruitment_db;
-\c ai_recruitment_db;
-```
+3. **spaCy Model Not Found**
+   ```bash
+   # Download the English model
+   python -m spacy download en_core_web_sm
+   ```
 
-### 2. Run Schema Creation
-```bash
-psql -d ai_recruitment_db -f database_schema.sql
-```
+4. **NLTK Data Missing**
+   ```bash
+   # Download required NLTK data
+   python -c "import nltk; nltk.download('punkt'); nltk.download('stopwords'); nltk.download('wordnet')"
+   ```
 
-### 3. Load Sample Data (Optional)
-```bash
-psql -d ai_recruitment_db -f sample_data.sql
-```
+### Debug Mode
+Set `FLASK_DEBUG=true` in your `.env` file for detailed error messages.
 
-## Usage Examples
-
-### Basic Queries
-
-#### Get candidate with full profile
-```sql
-SELECT 
-    c.*,
-    array_agg(DISTINCT ch.job_title) as job_titles,
-    array_agg(DISTINCT cs.skills) as skills,
-    array_agg(DISTINCT cl.language) as languages
-FROM candidate_master_profile c
-LEFT JOIN candidate_career_history ch ON c.id = ch.candidate_id
-LEFT JOIN candidate_skills cs ON c.id = cs.candidate_id
-LEFT JOIN candidate_languages cl ON c.id = cl.candidate_id
-WHERE c.email = 'john.smith@email.com'
-GROUP BY c.id;
-```
-
-#### Search by skills
-```sql
-SELECT DISTINCT c.first_name, c.last_name, c.email
-FROM candidate_master_profile c
-JOIN candidate_skills cs ON c.id = cs.candidate_id
-WHERE cs.skills ILIKE '%React%' 
-AND c.is_active = true;
-```
-
-#### Vector similarity search (requires embedding data)
-```sql
-SELECT 
-    c.first_name, 
-    c.last_name, 
-    c.email,
-    c.embedding_vector <=> '[0.1, 0.2, ...]'::vector as distance
-FROM candidate_master_profile c
-WHERE c.embedding_vector IS NOT NULL
-ORDER BY distance
-LIMIT 10;
-```
-
-## API Endpoints
-
-The application provides a comprehensive REST API with Swagger documentation:
-
-- **Health Check**: `GET /api/health`
-- **Swagger UI**: `/swagger/`
-- **Candidates**: `/api/candidates`
-- **Resumes**: `/api/resumes`
-- **Skills**: `/api/skills`
-- **Education**: `/api/education`
-- **Languages**: `/api/languages`
-- **Licenses**: `/api/licenses-certifications`
-
-## Docker Features
-
-- **Pre-loaded AI Models**: spaCy NER and NLTK data included
-- **Health Monitoring**: Built-in health checks and monitoring
-- **Production Ready**: Gunicorn server with optimized configuration
-- **Azure Optimized**: Ready for Azure Container Apps deployment
-
-## Environment Configuration
-
-Create a `.env` file and configure the following variables:
-
-```bash
-# Database
-DATABASE_URL=postgresql://username:password@host:port/database
-
-# Azure OpenAI (for AI summaries and embeddings)
-AZURE_OPENAI_API_KEY=your_azure_openai_key
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_API_VERSION=2024-02-15-preview
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
-
-# Resume Parser Configuration
-# Set to 'true' to use Azure Document Intelligence, 'false' for open-source spaCy/NLTK
-USE_AZURE_DOCUMENT_INTELLIGENCE=false
-
-# Azure Document Intelligence (only needed if USE_AZURE_DOCUMENT_INTELLIGENCE=true)
-AZURE_DI_ENDPOINT=https://your-document-intelligence-resource.cognitiveservices.azure.com/
-AZURE_DI_API_KEY=your_document_intelligence_api_key
-
-# Flask
-FLASK_ENV=production
-FLASK_DEBUG=false
-HOST=0.0.0.0
-PORT=5000
-FRONTEND_URL=http://localhost:3000
-
-# AI Processing Configuration
-SEMANTIC_SEARCH_SEMANTIC_WEIGHT=0.7
-AI_BULK_MAX_CONCURRENT_WORKERS=5
-AI_BULK_RATE_LIMIT_DELAY_SECONDS=1.0
-```
-
-### Resume Parser Models
-
-The application supports two resume parsing modes:
-
-**1. Open Source Mode (Default)** - `USE_AZURE_DOCUMENT_INTELLIGENCE=false`
-- Uses spaCy and NLTK for named entity recognition
-- No additional costs or API keys required
-- Requires `python -m spacy download en_core_web_sm`
-
-**2. Azure Document Intelligence Mode** - `USE_AZURE_DOCUMENT_INTELLIGENCE=true`
-- Uses Azure's AI Document Intelligence service
-- Requires Azure subscription and API credentials
-- Generally provides better accuracy for structured documents
-- Incurs usage-based costs
-
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes and add tests
+4. Commit your changes: `git commit -am 'Add new feature'`
+5. Push to the branch: `git push origin feature-name`
+6. Submit a pull request
 
-## License
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🆘 Support
+
+For support and questions:
+- Check the [API Documentation](API_DOCUMENTATION.md)
+- Review the [Environment Variables Reference](doc/ENV_VARIABLES_REFERENCE.md)
+- Check the test cases in the `test_case/` directory for usage examples
+
+## 🎯 Roadmap
+
+- [ ] Additional resume parsing methods
+- [ ] Enhanced semantic search with filters
+- [ ] Real-time candidate matching
+- [ ] Integration with external job boards
+- [ ] Advanced analytics and reporting
+- [ ] Multi-language support
