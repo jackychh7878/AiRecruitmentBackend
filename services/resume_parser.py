@@ -42,9 +42,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Load environment variables
-load_dotenv()
-
 class ResumeParser:
     """
     Enhanced resume parsing service supporting multiple parsing methods:
@@ -1080,25 +1077,74 @@ class ResumeParser:
                 "phone": "+1-555-123-4567",
                 "location": "San Francisco, CA",
                 "summary": "Experienced software engineer with 5+ years in full-stack development",
-                "education": {
-                    "degree": "Bachelor of Science in Computer Science",
-                    "school": "Stanford University",
-                    "graduation_year": "2018"
-                },
+                "education": [
+                    {
+                        "degree": "Bachelor of Science in Computer Science",
+                        "school": "Stanford University",
+                        "field_of_study": "Computer Science",
+                        "start_date": "2014-09-01",
+                        "end_date": "2018-06-15",
+                        "graduation_year": "2018",
+                        "grade": "3.8 GPA",
+                        "description": "Magna Cum Laude, Dean's List"
+                    },
+                    {
+                        "degree": "Master of Business Administration",
+                        "school": "Harvard Business School",
+                        "field_of_study": "Business Administration",
+                        "start_date": "2019-08-20",
+                        "end_date": "2021-05-30",
+                        "graduation_year": "2021",
+                        "description": "Concentration in Technology Management"
+                    },
+                    {
+                        "degree": "Doctor of Philosophy in Computer Science",
+                        "school": "MIT",
+                        "field_of_study": "Computer Science",
+                        "start_date": "2022-09-01",
+                        "end_date": null,
+                        "graduation_year": null,
+                        "description": "Currently pursuing PhD, expected graduation 2026"
+                    }
+                ],
                 "work_experience": [
                     {
                         "title": "Senior Software Engineer",
                         "company": "Tech Corp",
-                        "duration": "2020-2023",
-                        "description": "Led development of microservices architecture"
+                        "start_date": "2020-03-15",
+                        "end_date": null,
+                        "duration": "2020-Present",
+                        "description": "Currently leading development of microservices architecture using Python and AWS"
+                    },
+                    {
+                        "title": "Software Developer",
+                        "company": "StartupXYZ",
+                        "start_date": "2018-07-01",
+                        "end_date": "2020-02-28",
+                        "duration": "2018-2020",
+                        "description": "Developed web applications using React and Node.js"
                     }
                 ],
-                "skills": ["Python", "JavaScript", "React", "AWS", "Docker"],
+                "skills": ["Python", "JavaScript", "React", "AWS", "Docker", "Kubernetes", "SQL"],
                 "languages": [
                     {"language": "English", "proficiency": "Native"},
-                    {"language": "Spanish", "proficiency": "Intermediate"}
+                    {"language": "Spanish", "proficiency": "Intermediate"},
+                    {"language": "French", "proficiency": "Basic"}
                 ],
-                "certifications": ["AWS Certified Developer", "Google Cloud Professional"]
+                "certifications": [
+                    {
+                        "name": "AWS Certified Developer",
+                        "issuing_organization": "Amazon Web Services",
+                        "issue_date": "2022-03-15",
+                        "expiration_date": "2025-03-15"
+                    },
+                    {
+                        "name": "Google Cloud Professional",
+                        "issuing_organization": "Google Cloud",
+                        "issue_date": "2021-11-20",
+                        "expiration_date": "2024-11-20"
+                    }
+                ]
             }
         ]
 
@@ -1110,21 +1156,80 @@ class ResumeParser:
             
             # Define extraction prompt
             prompt_description = """
-            Extract comprehensive resume information from the provided text. Focus on:
-            1. Personal Information: Full name, email, phone number, location
+            Extract comprehensive resume information from the provided text. Pay special attention to dates and detailed fields:
+
+            1. Personal Information: 
+               - full_name: Complete name of the person
+               - email: Email address
+               - phone: Phone number (clean format)
+               - location: Current location/address
+
             2. Professional Summary: Brief career overview or objective
-            3. Education: Degrees, schools, graduation years, fields of study
-            4. Work Experience: Job titles, companies, dates, descriptions
-            5. Skills: Technical and soft skills
-            6. Languages: Languages spoken and proficiency levels
-            7. Certifications: Professional certifications and licenses
-            
-            Be thorough and accurate in extraction. If information is not clearly stated, 
-            use reasonable inference based on context.
+
+            3. Education (CRITICAL - extract ALL fields): 
+               - degree: Full degree name (e.g., "Bachelor of Science in Computer Science")
+               - school: Institution name
+               - field_of_study: Major/specialization (e.g., "Computer Science", "Accounting & Finance")
+               - start_date: Start date in YYYY-MM-DD format (e.g., "2014-09-01")
+               - end_date: CRITICAL - End date in YYYY-MM-DD format (e.g., "2018-06-15") OR null for ongoing education
+                 EXAMPLES of when to use null for end_date:
+                 * "2020 - Present" → end_date: null
+                 * "Currently enrolled" → end_date: null
+                 * "Pursuing PhD" → end_date: null
+                 * "Expected 2025" → end_date: null (for expected graduation)
+                 * Just a start date with no end → end_date: null
+               - graduation_year: Same as end_date for backward compatibility
+               - grade: GPA, honors, or academic achievements if mentioned
+               - description: Additional details like honors, concentrations, etc.
+
+            4. Work Experience (CRITICAL - extract dates): 
+               - title: Job title/position
+               - company: Company name
+               - start_date: Start date in YYYY-MM-DD format (e.g., "2020-01-15")
+               - end_date: CRITICAL - End date in YYYY-MM-DD format (e.g., "2023-12-31") OR null for current jobs
+                 EXAMPLES of when to use null for end_date:
+                 * "2020 - Present" → end_date: null
+                 * "Jan 2020 - Current" → end_date: null 
+                 * "2020 - Now" → end_date: null
+                 * Just a start date with no end → end_date: null
+               - duration: Period worked (e.g., "2020-2023", "Jan 2020 - Dec 2023")
+               - description: Job responsibilities and achievements
+
+            5. Skills: Technical and soft skills (be comprehensive)
+
+            6. Languages: Languages with proficiency levels (Native, Fluent, Advanced, Intermediate, Basic)
+
+            7. Certifications (extract issuing organizations):
+               - name: Certification name
+               - issuing_organization: Organization that issued the certification
+               - issue_date: Issue date in YYYY-MM-DD format (e.g., "2022-03-15") or null
+               - expiration_date: Expiration date in YYYY-MM-DD format (e.g., "2025-03-15") or null
+
+            IMPORTANT EXTRACTION RULES:
+            - CRITICAL: Always format dates as YYYY-MM-DD (e.g., "2020-03-15")
+            - CRITICAL: Use null (NOT a date) for current/ongoing positions AND education when you see:
+              * "Present", "Current", "Now", "Ongoing"
+              * "2020 - Present", "Jan 2020 - Present"
+              * No end date mentioned (still working/studying)
+              * Any indication the person is still in that position/program
+              * "Currently enrolled", "Pursuing", "Expected graduation"
+            - NEVER assign a future date or today's date for current positions/education - always use null
+            - Always extract start_date and end_date for work experience and education
+            - For education, always try to identify field_of_study from degree name or context
+            - For certifications, try to identify issuing_organization from context
+            - Look for date patterns like "2018-2020", "Jan 2018 - Dec 2020", "2018 to 2020"
+            - If only one date is mentioned, it's usually the end_date
+            - If only year is available, use January 1st for start dates and December 31st for end dates
+            - Be thorough and accurate. Extract all available information.
             """
             
             # Create examples for better extraction
-            examples = self._create_langextract_examples()
+            try:
+                examples = self._create_langextract_examples()
+                logger.info(f"Created {len(examples)} examples for LangExtract")
+            except Exception as examples_error:
+                logger.error(f"Error creating examples: {examples_error}")
+                examples = []  # Fallback to no examples
             
             # Use LangExtract with Azure OpenAI
             logger.info("Starting LangExtract extraction with Azure OpenAI")
@@ -1132,20 +1237,47 @@ class ResumeParser:
             try:
                 # Try to use LangExtract with default Gemini model
                 # If LANGEXTRACT_API_KEY is not set, this will fail and we'll use Azure OpenAI fallback
-                result = lx.extract(
-                    text_or_documents=text,
-                    prompt_description=prompt_description,
-                    examples=examples,
-                    model_id="gemini-2.5-flash",  # Use default Gemini model
-                    max_workers=1,
-                    extraction_passes=2  # Multiple passes for better accuracy
-                )
+                logger.info("Attempting LangExtract with Gemini model")
                 
+                # First try a simple test to see if LangExtract works at all
+                logger.info("Testing LangExtract basic functionality")
+                test_result = lx.extract(
+                    text_or_documents="Hello world",
+                    prompt_description="Extract any names mentioned",
+                    model_id="gemini-2.5-flash",
+                    max_workers=1
+                )
+                logger.info(f"LangExtract basic test successful: {type(test_result)}")
+                
+                # Now try with the actual data
+                # First try without examples to isolate the issue
+                if examples:
+                    logger.info("Trying LangExtract with examples")
+                    result = lx.extract(
+                        text_or_documents=text,
+                        prompt_description=prompt_description,
+                        examples=examples,
+                        model_id="gemini-2.5-flash",  # Use default Gemini model
+                        max_workers=1,
+                        extraction_passes=2  # Multiple passes for better accuracy
+                    )
+                else:
+                    logger.info("Trying LangExtract without examples")
+                    result = lx.extract(
+                        text_or_documents=text,
+                        prompt_description=prompt_description,
+                        model_id="gemini-2.5-flash",  # Use default Gemini model
+                        max_workers=1,
+                        extraction_passes=2  # Multiple passes for better accuracy
+                    )
+                
+                logger.info("LangExtract completed successfully, converting result")
                 # Convert LangExtract result to standardized format
                 return self._convert_langextract_result(result, text)
                 
             except Exception as langextract_error:
-                logger.warning(f"LangExtract failed: {langextract_error}")
+                logger.error(f"LangExtract failed: {langextract_error}")
+                logger.error(f"LangExtract error type: {type(langextract_error)}")
                 
                 # Check if it's an API key issue
                 if "api" in str(langextract_error).lower() or "key" in str(langextract_error).lower():
@@ -1165,11 +1297,18 @@ class ResumeParser:
     def _convert_langextract_result(self, langextract_result: Any, original_text: str) -> Dict[str, Any]:
         """Convert LangExtract result to standardized format"""
         try:
+            logger.info(f"Converting LangExtract result. Type: {type(langextract_result)}")
+            
             # Extract the first result if multiple results
             if hasattr(langextract_result, 'results') and langextract_result.results:
+                logger.info(f"Found results array with {len(langextract_result.results)} items")
                 extracted_data = langextract_result.results[0]
             else:
+                logger.info("Using langextract_result directly as extracted_data")
                 extracted_data = langextract_result
+                
+            logger.info(f"Extracted data type: {type(extracted_data)}")
+            logger.info(f"Extracted data keys: {list(extracted_data.keys()) if hasattr(extracted_data, 'keys') else 'No keys method'}")
             
             # Parse name
             full_name = extracted_data.get('full_name', '')
@@ -1179,44 +1318,107 @@ class ResumeParser:
             
             # Parse education
             education_list = []
-            education_data = extracted_data.get('education', {})
-            if education_data:
-                education_record = {
-                    'candidate_id': 0,  # Will be set when saving to database
-                    'school': education_data.get('school'),
-                    'degree': education_data.get('degree'),
-                    'field_of_study': education_data.get('field_of_study'),
-                    'start_date': None,
-                    'end_date': education_data.get('graduation_year'),
-                    'grade': None,
-                    'description': None,
-                    'is_active': True
-                }
-                education_list.append(education_record)
+            education_data = extracted_data.get('education', [])
+            
+            # Handle both single education record and list format
+            if isinstance(education_data, dict):
+                education_data = [education_data]
+            elif not isinstance(education_data, list):
+                education_data = []
+                
+            for edu in education_data:
+                if edu:  # Make sure we have data
+                    # Extract field of study from degree if not explicitly provided
+                    field_of_study = edu.get('field_of_study')
+                    degree = edu.get('degree', '')
+                    
+                    if not field_of_study and degree:
+                        # Try to extract field from degree name
+                        field_patterns = [
+                            r'in\s+([^,\n]+)',  # "Bachelor of Science in Computer Science"
+                            r'of\s+([^,\n]+)',  # "Master of Business Administration"
+                            r'(\w+\s+\w+)(?:\s+\(|$)',  # Last two words before parentheses
+                        ]
+                        
+                        for pattern in field_patterns:
+                            match = re.search(pattern, degree, re.IGNORECASE)
+                            if match:
+                                field_of_study = match.group(1).strip()
+                                break
+                    
+                    # Extract dates with improved parsing for education
+                    start_date = self._extract_year(edu.get('start_date'))
+                    end_date = self._extract_year(edu.get('end_date') or edu.get('graduation_year'))
+                    
+                    # Check if the original end_date value indicates ongoing education
+                    original_end_date = edu.get('end_date') or edu.get('graduation_year')
+                    is_ongoing_education = (
+                        original_end_date is None or 
+                        (isinstance(original_end_date, str) and 
+                         any(word in original_end_date.lower() for word in ['present', 'current', 'now', 'ongoing', 'enrolled', 'pursuing']))
+                    )
+                    
+                    # Final check: if it's ongoing education, ensure end_date is None
+                    if is_ongoing_education:
+                        end_date = None
+                    
+                    education_record = {
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'school': edu.get('school'),
+                        'degree': degree,
+                        'field_of_study': field_of_study,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'grade': edu.get('grade'),
+                        'description': edu.get('description'),
+                        'is_active': True
+                    }
+                    education_list.append(education_record)
             
             # Parse work experience
             career_history = []
             work_exp = extracted_data.get('work_experience', [])
             for exp in work_exp:
+                # Extract dates with improved parsing
+                start_date = self._extract_year(exp.get('start_date'))
+                end_date = self._extract_year(exp.get('end_date'))
+                
+                # Check if the original end_date value indicates current position
+                original_end_date = exp.get('end_date')
+                is_current_position = (
+                    original_end_date is None or 
+                    (isinstance(original_end_date, str) and 
+                     any(word in original_end_date.lower() for word in ['present', 'current', 'now', 'ongoing']))
+                )
+                
+                # If we're missing dates, try to extract from duration field
+                # But be careful not to override current position indicators
+                if not start_date or (end_date is None and not is_current_position):
+                    duration = exp.get('duration', '')
+                    if duration:
+                        parsed_dates = self._parse_date_range(duration)
+                        if parsed_dates:
+                            if not start_date:
+                                start_date = parsed_dates.get('start_date')
+                            # Only set end_date from duration if it's not a current position
+                            if end_date is None and not is_current_position:
+                                # Double-check the duration doesn't indicate current position
+                                if not any(word in duration.lower() for word in ['present', 'current', 'now', 'ongoing']):
+                                    end_date = parsed_dates.get('end_date')
+                
+                # Final check: if it's a current position, ensure end_date is None
+                if is_current_position:
+                    end_date = None
+                
                 career_record = {
                     'candidate_id': 0,  # Will be set when saving to database
                     'job_title': exp.get('title'),
                     'company_name': exp.get('company'),
-                    'start_date': None,
-                    'end_date': None,
+                    'start_date': start_date,
+                    'end_date': end_date,
                     'description': exp.get('description'),
                     'is_active': True
                 }
-                # Parse duration if available
-                duration = exp.get('duration', '')
-                if duration:
-                    # Try to extract start and end dates from duration
-                    date_matches = re.findall(r'\b(19|20)\d{2}\b', duration)
-                    if len(date_matches) >= 2:
-                        career_record['start_date'] = date_matches[0]
-                        career_record['end_date'] = date_matches[1]
-                    elif len(date_matches) == 1:
-                        career_record['start_date'] = date_matches[0]
                         
                 career_history.append(career_record)
             
@@ -1254,16 +1456,30 @@ class ResumeParser:
             certifications_list = []
             certifications = extracted_data.get('certifications', [])
             for cert in certifications:
-                certifications_list.append({
-                    'candidate_id': 0,  # Will be set when saving to database
-                    'name': cert,
-                    'issuing_organization': None,
-                    'issue_date': None,
-                    'expiration_date': None,
-                    'credential_id': None,
-                    'credential_url': None,
-                    'is_active': True
-                })
+                if isinstance(cert, str):
+                    # Handle simple string format
+                    certifications_list.append({
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'name': cert,
+                        'issuing_organization': None,
+                        'issue_date': None,
+                        'expiration_date': None,
+                        'credential_id': None,
+                        'credential_url': None,
+                        'is_active': True
+                    })
+                elif isinstance(cert, dict):
+                    # Handle structured format with issuing organization and dates
+                    certifications_list.append({
+                        'candidate_id': 0,  # Will be set when saving to database
+                        'name': cert.get('name'),
+                        'issuing_organization': cert.get('issuing_organization'),
+                        'issue_date': self._extract_year(cert.get('issue_date')),
+                        'expiration_date': self._extract_year(cert.get('expiration_date')),
+                        'credential_id': cert.get('credential_id'),
+                        'credential_url': cert.get('credential_url'),
+                        'is_active': True
+                    })
             
             # Structure the response
             parsed_data = {
@@ -1300,7 +1516,7 @@ class ResumeParser:
             return self._fallback_extraction(original_text)
 
     def _fallback_extraction(self, text: str) -> Dict[str, Any]:
-        """Fallback extraction using basic regex patterns"""
+        """Fallback extraction using basic regex patterns with improved field extraction"""
         # Basic contact info extraction
         email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
         emails = re.findall(email_pattern, text)
@@ -1320,9 +1536,136 @@ class ResumeParser:
                 if len(phone) >= 10:
                     break
         
+        # Basic name extraction from first few lines
+        first_name = None
+        last_name = None
+        lines = text.split('\n')
+        for line in lines[:5]:  # Check first 5 lines
+            line = line.strip()
+            if line and not any(char in line for char in ['@', 'http', 'phone', 'mobile', 'tel', '+', '·']):
+                words = line.split()
+                if 2 <= len(words) <= 4 and all(word.replace('-', '').replace("'", '').isalpha() for word in words):
+                    first_name = words[0]
+                    last_name = ' '.join(words[1:])
+                    break
+        
+        # Basic education extraction
+        education_list = []
+        education_patterns = [
+            r'(bachelor|master|phd|doctorate|diploma|certificate|degree)[\s\w]*in[\s\w]+',
+            r'(university|college|institute|school)[\s\w]{1,50}',
+            r'(b\.?s\.?|m\.?s\.?|b\.?a\.?|m\.?a\.?|ph\.?d\.?)[\s\w]*',
+        ]
+        
+        year_pattern = r'\b(19|20)\d{2}\b'
+        years = re.findall(year_pattern, text)
+        
+        schools = []
+        degrees = []
+        
+        for pattern in education_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                match_text = match.group()
+                if any(keyword in match_text.lower() for keyword in 
+                      ['university', 'college', 'institute', 'school', 'academy']):
+                    schools.append(match_text)
+                else:
+                    degrees.append(match_text)
+        
+        if schools or degrees:
+            for i, school in enumerate(schools[:2]):  # Limit to 2 education records
+                degree = degrees[i] if i < len(degrees) else None
+                field_of_study = None
+                
+                # Try to extract field of study from degree
+                if degree:
+                    field_patterns = [
+                        r'in\s+([^,\n]+)',
+                        r'of\s+([^,\n]+)',
+                    ]
+                    for pattern in field_patterns:
+                        match = re.search(pattern, degree, re.IGNORECASE)
+                        if match:
+                            field_of_study = match.group(1).strip()
+                            break
+                
+                education_record = {
+                    'candidate_id': 0,
+                    'school': school,
+                    'degree': degree,
+                    'field_of_study': field_of_study,
+                    'start_date': None,
+                    'end_date': years[i] if i < len(years) else None,
+                    'grade': None,
+                    'description': None,
+                    'is_active': True
+                }
+                education_list.append(education_record)
+        
+        # Basic work experience extraction
+        career_history = []
+        company_patterns = [
+            r'([A-Z][a-zA-Z\s&]+)\s+(Inc|LLC|Corp|Corporation|Ltd|Limited|Company|Co\.)',
+            r'([A-Z][a-zA-Z\s&]+)\s+(Technologies|Tech|Software|Systems|Solutions)'
+        ]
+        
+        job_title_patterns = [
+            r'(senior|junior|lead|principal)?\s*(software|web|mobile|data|system)?\s*(engineer|developer|analyst|manager|designer|architect|scientist)',
+            r'(project|product|marketing|sales|operations|hr|finance)\s*manager',
+            r'(ceo|cto|cfo|vp|director|coordinator|specialist|consultant)',
+        ]
+        
+        companies = []
+        job_titles = []
+        
+        for pattern in company_patterns:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                companies.append(match.group().strip())
+        
+        for pattern in job_title_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                job_titles.append(match.group().strip())
+        
+        # Create work experience records
+        for i, company in enumerate(companies[:3]):  # Limit to 3 work records
+            career_record = {
+                'candidate_id': 0,
+                'job_title': job_titles[i] if i < len(job_titles) else None,
+                'company_name': company,
+                'start_date': None,
+                'end_date': None,
+                'description': None,
+                'is_active': True
+            }
+            career_history.append(career_record)
+        
+        # Basic skills extraction
+        skills_list = []
+        skill_keywords = [
+            'python', 'javascript', 'java', 'react', 'node.js', 'sql', 'html', 'css',
+            'angular', 'vue', 'flutter', 'django', 'flask', 'spring', 'laravel',
+            'mysql', 'postgresql', 'mongodb', 'redis', 'oracle',
+            'aws', 'azure', 'docker', 'kubernetes', 'jenkins', 'terraform',
+            'machine learning', 'tensorflow', 'pytorch', 'pandas', 'numpy',
+            'git', 'agile', 'scrum', 'jira', 'confluence'
+        ]
+        
+        text_lower = text.lower()
+        for skill in skill_keywords:
+            if skill in text_lower:
+                skills_list.append({
+                    'candidate_id': 0,
+                    'career_history_id': 0,
+                    'skills': skill.title(),
+                    'is_active': True
+                })
+        
         return {
-            'first_name': None,
-            'last_name': None,
+            'first_name': first_name,
+            'last_name': last_name,
             'email': emails[0] if emails else None,
             'location': None,
             'phone_number': phone,
@@ -1335,9 +1678,9 @@ class ResumeParser:
             'sub_classification_of_interest': None,
             'citizenship': None,
             'is_active': True,
-            'career_history': [],
-            'skills': [],
-            'education': [],
+            'career_history': career_history,
+            'skills': skills_list,
+            'education': education_list,
             'licenses_certifications': [],
             'languages': [],
             'resumes': [],
@@ -1457,8 +1800,6 @@ class ResumeParser:
             
             # Process with spaCy for NER
             doc = self.nlp(raw_text)  # Use raw text for NER to preserve formatting
-
-            print(doc)
             
             # Extract name (assume first PERSON entity is the candidate's name)
             first_name = None
@@ -1821,6 +2162,134 @@ class ResumeParser:
         
         return None
 
+    def _extract_year(self, date_str: Union[str, int, None]) -> Optional[str]:
+        """
+        Extract year from various date formats and convert to YYYY-MM-DD format
+        
+        Args:
+            date_str: Date string, integer, or None
+            
+        Returns:
+            str: Formatted date as YYYY-MM-DD or None for Present/Current
+        """
+        if not date_str:
+            return None
+            
+        # Convert to string if it's an integer
+        if isinstance(date_str, int):
+            date_str = str(date_str)
+        else:
+            date_str = str(date_str).strip()
+        
+        # Handle common words for current employment - return None for frontend
+        if any(word in date_str.lower() for word in ['present', 'current', 'now', 'ongoing']):
+            return None
+            
+        # Try to extract date components
+        # First try to find full date patterns (YYYY-MM-DD, MM/YYYY, etc.)
+        date_patterns = [
+            # Already in YYYY-MM-DD format
+            r'(\d{4})-(\d{1,2})-(\d{1,2})',
+            # MM/YYYY or MM-YYYY format
+            r'(\d{1,2})[/-](\d{4})',
+            # YYYY/MM or YYYY-MM format  
+            r'(\d{4})[/-](\d{1,2})',
+            # Month Year format (e.g., "Jan 2020", "January 2020")
+            r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})',
+            # Just year
+            r'\b(19|20)\d{2}\b'
+        ]
+        
+        for i, pattern in enumerate(date_patterns):
+            match = re.search(pattern, date_str, re.IGNORECASE)
+            if match:
+                if i == 0:  # Already YYYY-MM-DD
+                    year, month, day = match.groups()
+                    return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+                elif i == 1:  # MM/YYYY
+                    month, year = match.groups()
+                    return f"{year}-{month.zfill(2)}-01"  # Default to 1st of month
+                elif i == 2:  # YYYY/MM
+                    year, month = match.groups()
+                    return f"{year}-{month.zfill(2)}-01"  # Default to 1st of month
+                elif i == 3:  # Month Year
+                    month_name, year = match.groups()
+                    month_map = {
+                        'jan': '01', 'january': '01',
+                        'feb': '02', 'february': '02', 
+                        'mar': '03', 'march': '03',
+                        'apr': '04', 'april': '04',
+                        'may': '05',
+                        'jun': '06', 'june': '06',
+                        'jul': '07', 'july': '07',
+                        'aug': '08', 'august': '08',
+                        'sep': '09', 'september': '09',
+                        'oct': '10', 'october': '10',
+                        'nov': '11', 'november': '11',
+                        'dec': '12', 'december': '12'
+                    }
+                    month_num = month_map.get(month_name.lower(), '01')
+                    return f"{year}-{month_num}-01"
+                elif i == 4:  # Just year
+                    year = match.group()
+                    return f"{year}-01-01"  # Default to January 1st
+                    
+        return None
+    
+    def _parse_date_range(self, duration_str: str) -> Optional[Dict[str, str]]:
+        """
+        Parse date range from duration strings and format as YYYY-MM-DD
+        
+        Args:
+            duration_str: Duration string
+            
+        Returns:
+            Dict with start_date and end_date formatted as YYYY-MM-DD or None
+        """
+        if not duration_str:
+            return None
+            
+        # Common patterns for date ranges
+        patterns = [
+            r'(\d{4})\s*[-–—to]+\s*(\d{4})',  # 2020-2023, 2020 to 2023
+            r'(\d{4})\s*[-–—to]+\s*(present|current|now)',  # 2020-Present
+            r'(\w{3}\s+\d{4})\s*[-–—to]+\s*(\w{3}\s+\d{4})',  # Jan 2020 - Dec 2023
+            r'(\w{3}\s+\d{4})\s*[-–—to]+\s*(present|current|now)',  # Jan 2020 - Present
+            r'(\d{1,2}/\d{4})\s*[-–—to]+\s*(\d{1,2}/\d{4})',  # 01/2020 - 12/2023
+            r'(\d{1,2}/\d{4})\s*[-–—to]+\s*(present|current|now)',  # 01/2020 - Present
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, duration_str, re.IGNORECASE)
+            if match:
+                start_str, end_str = match.groups()
+                
+                # Extract dates using the updated _extract_year method
+                start_date = self._extract_year(start_str)
+                end_date = self._extract_year(end_str)  # This will return None for present/current
+                
+                if start_date:
+                    return {
+                        'start_date': start_date,
+                        'end_date': end_date
+                    }
+        
+        # If no range pattern found, try to extract individual years
+        years = re.findall(r'\b(19|20)\d{2}\b', duration_str)
+        if len(years) >= 2:
+            return {
+                'start_date': f"{years[0]}-01-01",  # Format as YYYY-MM-DD
+                'end_date': f"{years[-1]}-12-31"   # Format as YYYY-MM-DD (end of year)
+            }
+        elif len(years) == 1:
+            # Single year might be end date
+            return {
+                'start_date': None,
+                'end_date': f"{years[0]}-12-31"  # Format as YYYY-MM-DD
+            }
+            
+        return None
+
     def _convert_azure_di_to_structured_text(self, result) -> str:
         """
         Convert Azure DI result to structured text format that can be used with LLM
@@ -1933,11 +2402,56 @@ class ResumeParser:
             3. phone: Phone number (clean format)
             4. location: Current location/address
             5. summary: Professional summary or objective
-            6. education: Array of education records with degree, school, graduation_year
-            7. work_experience: Array of work experience with title, company, duration, description
+                         6. education: Array of education records with ALL these fields:
+               - degree: Full degree name
+               - school: Institution name
+               - field_of_study: Major/specialization (extract from degree if not explicit)
+               - start_date: Start date in YYYY-MM-DD format (e.g., "2014-09-01")
+               - end_date: CRITICAL - End date in YYYY-MM-DD format (e.g., "2018-06-15") OR null for ongoing education
+                 EXAMPLES of when to use null for end_date:
+                 * "2020 - Present" → end_date: null
+                 * "Currently enrolled" → end_date: null
+                 * "Pursuing PhD" → end_date: null
+                 * "Expected 2025" → end_date: null (for expected graduation)
+                 * Just a start date with no end → end_date: null
+               - graduation_year: Same as end_date year
+               - grade: GPA or honors if mentioned
+               - description: Additional details
+                         7. work_experience: Array of work experience with ALL these fields:
+                - title: Job title
+                - company: Company name
+                - start_date: Start date in YYYY-MM-DD format (e.g., "2020-01-15")
+                - end_date: CRITICAL - End date in YYYY-MM-DD format (e.g., "2023-12-31") OR null for current jobs
+                  EXAMPLES of when to use null for end_date:
+                  * "2020 - Present" → end_date: null
+                  * "Jan 2020 - Current" → end_date: null 
+                  * "2020 - Now" → end_date: null
+                  * Just a start date with no end → end_date: null
+                - duration: Date range (e.g., "2020-2023")
+                - description: Job responsibilities
             8. skills: Array of technical and professional skills
-            9. languages: Array of languages with proficiency
-            10. certifications: Array of certifications and licenses
+            9. languages: Array of languages with proficiency levels
+                         10. certifications: Array with these fields:
+                 - name: Certification name
+                 - issuing_organization: Organization that issued it
+                 - issue_date: Issue date in YYYY-MM-DD format (e.g., "2022-03-15") or null
+                 - expiration_date: Expiration date in YYYY-MM-DD format (e.g., "2025-03-15") or null
+
+                         CRITICAL REQUIREMENTS:
+             - CRITICAL: Always format dates as YYYY-MM-DD (e.g., "2020-03-15")
+             - CRITICAL: Use null (NOT a date) for current/ongoing positions AND education when you see:
+               * "Present", "Current", "Now", "Ongoing"
+               * "2020 - Present", "Jan 2020 - Present"
+               * No end date mentioned (still working/studying)
+               * Any indication the person is still in that position/program
+               * "Currently enrolled", "Pursuing", "Expected graduation"
+             - NEVER assign a future date or today's date for current positions/education - always use null
+             - ALWAYS extract start_date and end_date for work experience and education
+             - ALWAYS try to identify field_of_study from degree names
+             - ALWAYS look for issuing organizations for certifications
+             - Look for date patterns like "2018-2020", "Jan 2018 - Dec 2020", "2018 to 2020"
+             - If only year is available, use January 1st for start dates and December 31st for end dates
+             - Be comprehensive in skills extraction
 
             Return ONLY valid JSON without any additional text or markdown formatting.
             """
@@ -1986,15 +2500,49 @@ class ResumeParser:
             education_data = extracted_data.get('education', [])
             if isinstance(education_data, list):
                 for edu in education_data:
+                    # Extract field of study from degree if not explicitly provided
+                    field_of_study = edu.get('field_of_study')
+                    degree = edu.get('degree', '')
+                    
+                    if not field_of_study and degree:
+                        # Try to extract field from degree name
+                        field_patterns = [
+                            r'in\s+([^,\n]+)',  # "Bachelor of Science in Computer Science"
+                            r'of\s+([^,\n]+)',  # "Master of Business Administration"
+                            r'(\w+\s+\w+)(?:\s+\(|$)',  # Last two words before parentheses
+                        ]
+                        
+                        for pattern in field_patterns:
+                            match = re.search(pattern, degree, re.IGNORECASE)
+                            if match:
+                                field_of_study = match.group(1).strip()
+                                break
+                    
+                    # Extract dates with improved parsing for education
+                    start_date = self._extract_year(edu.get('start_date'))
+                    end_date = self._extract_year(edu.get('end_date') or edu.get('graduation_year'))
+                    
+                    # Check if the original end_date value indicates ongoing education
+                    original_end_date = edu.get('end_date') or edu.get('graduation_year')
+                    is_ongoing_education = (
+                        original_end_date is None or 
+                        (isinstance(original_end_date, str) and 
+                         any(word in original_end_date.lower() for word in ['present', 'current', 'now', 'ongoing', 'enrolled', 'pursuing']))
+                    )
+                    
+                    # Final check: if it's ongoing education, ensure end_date is None
+                    if is_ongoing_education:
+                        end_date = None
+                    
                     education_record = {
                         'candidate_id': 0,  # Will be set when saving to database
                         'school': edu.get('school'),
-                        'degree': edu.get('degree'),
-                        'field_of_study': edu.get('field_of_study'),
-                        'start_date': None,
-                        'end_date': edu.get('graduation_year'),
-                        'grade': None,
-                        'description': None,
+                        'degree': degree,
+                        'field_of_study': field_of_study,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'grade': edu.get('grade'),
+                        'description': edu.get('description'),
                         'is_active': True
                     }
                     education_list.append(education_record)
@@ -2004,12 +2552,43 @@ class ResumeParser:
             work_exp = extracted_data.get('work_experience', [])
             if isinstance(work_exp, list):
                 for exp in work_exp:
+                    # Extract dates with improved parsing
+                    start_date = self._extract_year(exp.get('start_date'))
+                    end_date = self._extract_year(exp.get('end_date'))
+                    
+                    # Check if the original end_date value indicates current position
+                    original_end_date = exp.get('end_date')
+                    is_current_position = (
+                        original_end_date is None or 
+                        (isinstance(original_end_date, str) and 
+                         any(word in original_end_date.lower() for word in ['present', 'current', 'now', 'ongoing']))
+                    )
+                    
+                    # If we're missing dates, try to extract from duration field
+                    # But be careful not to override current position indicators
+                    if not start_date or (end_date is None and not is_current_position):
+                        duration = exp.get('duration', '')
+                        if duration:
+                            parsed_dates = self._parse_date_range(duration)
+                            if parsed_dates:
+                                if not start_date:
+                                    start_date = parsed_dates.get('start_date')
+                                # Only set end_date from duration if it's not a current position
+                                if end_date is None and not is_current_position:
+                                    # Double-check the duration doesn't indicate current position
+                                    if not any(word in duration.lower() for word in ['present', 'current', 'now', 'ongoing']):
+                                        end_date = parsed_dates.get('end_date')
+                    
+                    # Final check: if it's a current position, ensure end_date is None
+                    if is_current_position:
+                        end_date = None
+                    
                     career_record = {
                         'candidate_id': 0,  # Will be set when saving to database
                         'job_title': exp.get('title'),
                         'company_name': exp.get('company'),
-                        'start_date': exp.get('start_date'),
-                        'end_date': exp.get('end_date'),
+                        'start_date': start_date,
+                        'end_date': end_date,
                         'description': exp.get('description'),
                         'is_active': True
                     }
@@ -2062,6 +2641,18 @@ class ResumeParser:
                             'expiration_date': None,
                             'credential_id': None,
                             'credential_url': None,
+                            'is_active': True
+                        })
+                    elif isinstance(cert, dict):
+                        # Handle structured format with issuing organization and dates
+                        certifications_list.append({
+                            'candidate_id': 0,  # Will be set when saving to database
+                            'name': cert.get('name'),
+                            'issuing_organization': cert.get('issuing_organization'),
+                            'issue_date': self._extract_year(cert.get('issue_date')),
+                            'expiration_date': self._extract_year(cert.get('expiration_date')),
+                            'credential_id': cert.get('credential_id'),
+                            'credential_url': cert.get('credential_url'),
                             'is_active': True
                         })
             

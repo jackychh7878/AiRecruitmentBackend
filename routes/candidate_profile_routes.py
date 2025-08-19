@@ -1129,12 +1129,17 @@ class CandidateResumeParser(Resource):
     @candidate_profile_ns.expect(resume_upload_parser)
     def post(self):
         """
-        Parse PDF resume and extract candidate information using NER
+        Parse PDF resume and extract candidate information using configurable parsing methods
         
-        This endpoint uses Named Entity Recognition (NER) and PDF text extraction 
-        to automatically extract candidate profile information from uploaded resume PDFs.
+        This endpoint supports multiple parsing methods based on the RESUME_PARSING_METHOD environment variable:
+        - 'spacy': Traditional NER with spaCy and NLTK (default)
+        - 'azure_di': Azure Document Intelligence with query fields
+        - 'langextract': LangExtract with Gemini API or Azure OpenAI fallback
         
-        Based on methodology from: https://medium.com/pythons-gurus/performing-resum%C3%A9-analysis-using-ner-with-cosine-similarity-8eb99879cda4
+        Environment Variables:
+        - RESUME_PARSING_METHOD: Set to 'spacy', 'azure_di', or 'langextract'
+        - For azure_di: Requires AZURE_DI_ENDPOINT and AZURE_DI_API_KEY
+        - For langextract: Requires AZURE_OPENAI_* variables, optionally LANGEXTRACT_API_KEY
         
         Returns structured candidate data that can be used to prefill 
         candidate creation forms in the frontend.
@@ -1164,9 +1169,12 @@ class CandidateResumeParser(Resource):
             if file_size == 0:
                 candidate_profile_ns.abort(400, 'File is empty')
             
-            # Parse the resume using NER service
+            # Parse the resume using the configured parsing service
             try:
-                parsed_data = resume_parser.parse_resume(file)
+                # Get fresh resume parser instance to pick up any environment changes
+                from services.resume_parser import get_resume_parser
+                current_parser = get_resume_parser()
+                parsed_data = current_parser.parse_resume(file)
                 
                 # Calculate parsing statistics
                 parsing_stats = {
@@ -1205,10 +1213,18 @@ class CandidateResumeParser(Resource):
                 completeness_score = sum(completeness_factors) / len(completeness_factors) * 100
                 parsing_stats['completeness_score'] = round(completeness_score, 1)
                 
+                # Add parsing method information
+                parsing_stats['parsing_method'] = current_parser.parsing_method
+                parsing_stats['parsing_method_details'] = {
+                    'method': current_parser.parsing_method,
+                    'available_methods': ['spacy', 'azure_di', 'langextract'],
+                    'environment_variable': 'RESUME_PARSING_METHOD'
+                }
+                
                 # Prepare response
                 response_data = {
                     'success': True,
-                    'message': f'Resume parsed successfully. Extracted {sum(parsing_stats["entities_extracted"].values())} entities with {parsing_stats["completeness_score"]}% completeness.',
+                    'message': f'Resume parsed successfully using {current_parser.parsing_method} method. Extracted {sum(parsing_stats["entities_extracted"].values())} entities with {parsing_stats["completeness_score"]}% completeness.',
                     'candidate_data': parsed_data,
                     'parsing_stats': parsing_stats
                 }
@@ -1569,35 +1585,52 @@ class ResumeParserDebugConfig(Resource):
             # Reload environment variables to get current state
             load_dotenv()
             
-            # Get current environment variable
-            use_azure_di_env = os.getenv('USE_AZURE_DOCUMENT_INTELLIGENCE', 'false')
+            # Get current environment variables
+            parsing_method_env = os.getenv('RESUME_PARSING_METHOD', 'spacy')
+            azure_di_endpoint = os.getenv('AZURE_DI_ENDPOINT', '')
+            azure_openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT', '')
+            langextract_api_key = os.getenv('LANGEXTRACT_API_KEY', '')
             
-            # Get parser's current configuration
-            parser_uses_azure = getattr(resume_parser, 'use_azure_di', None)
+            # Get fresh parser instance
+            from services.resume_parser import get_resume_parser
+            current_parser = get_resume_parser()
             
             config_info = {
-                'environment_variable': {
-                    'USE_AZURE_DOCUMENT_INTELLIGENCE': use_azure_di_env,
-                    'parsed_as_boolean': use_azure_di_env.lower() == 'true'
+                'environment_variables': {
+                    'RESUME_PARSING_METHOD': parsing_method_env,
+                    'AZURE_DI_ENDPOINT': 'SET' if azure_di_endpoint else 'NOT SET',
+                    'AZURE_DI_API_KEY': 'SET' if os.getenv('AZURE_DI_API_KEY') else 'NOT SET',
+                    'AZURE_OPENAI_ENDPOINT': 'SET' if azure_openai_endpoint else 'NOT SET',
+                    'AZURE_OPENAI_API_KEY': 'SET' if os.getenv('AZURE_OPENAI_API_KEY') else 'NOT SET',
+                    'LANGEXTRACT_API_KEY': 'SET' if langextract_api_key else 'NOT SET'
                 },
                 'parser_current_config': {
-                    'uses_azure_di': parser_uses_azure,
-                    'has_azure_client': hasattr(resume_parser, 'azure_di_client'),
-                    'has_spacy_nlp': hasattr(resume_parser, 'nlp'),
-                    'supports_query_fields': parser_uses_azure  # Query fields only available with Azure DI
+                    'parsing_method': current_parser.parsing_method,
+                    'available_methods': ['spacy', 'azure_di', 'langextract'],
+                    'has_azure_di_client': hasattr(current_parser, 'azure_di_client'),
+                    'has_azure_openai_client': hasattr(current_parser, 'azure_openai_client'),
+                    'has_spacy_nlp': hasattr(current_parser, 'nlp')
                 },
-                'azure_di_env_vars': {
-                    'AZURE_DI_ENDPOINT': 'SET' if os.getenv('AZURE_DI_ENDPOINT') else 'NOT SET',
-                    'AZURE_DI_API_KEY': 'SET' if os.getenv('AZURE_DI_API_KEY') else 'NOT SET'
+                'method_specific_features': {
+                    'spacy': {
+                        'available': True,
+                        'uses_entity_ruler': True,
+                        'supported_entities': ['PERSON', 'ORG', 'GPE', 'SKILL']
+                    },
+                    'azure_di': {
+                        'available': hasattr(current_parser, 'azure_di_client'),
+                        'query_fields_enabled': current_parser.parsing_method == 'azure_di',
+                        'query_fields': ['Summary', 'Name', 'Phone', 'Email', 'Education', 'ProfessionalExperienceRole', 'ProfessionalExperienceDescription', 'Skills', 'LicensesCertifications', 'Languages'],
+                        'supported_models': ['prebuilt-layout', 'prebuilt-document']
+                    },
+                    'langextract': {
+                        'available': current_parser.parsing_method == 'langextract',
+                        'has_gemini_api': bool(langextract_api_key),
+                        'has_azure_openai_fallback': hasattr(current_parser, 'azure_openai_client'),
+                        'uses_structured_prompts': True
+                    }
                 },
-                'azure_di_features': {
-                    'query_fields_enabled': parser_uses_azure,
-                    'query_fields_count': 10 if parser_uses_azure else 0,
-                    'query_fields': ['Summary', 'Name', 'Phone', 'Email', 'Education', 'ProfessionalExperienceRole', 'ProfessionalExperienceDescription', 'Skills', 'LicensesCertifications', 'Languages'] if parser_uses_azure else [],
-                    'fallback_to_regex': True,
-                    'supported_models': ['prebuilt-layout', 'prebuilt-document'] if parser_uses_azure else []
-                },
-                'recommendation': 'Restart Flask app if environment variable was changed after startup' if use_azure_di_env.lower() == 'true' and not parser_uses_azure else 'Configuration looks correct'
+                'recommendation': f'Parser is configured to use {current_parser.parsing_method} method. Restart Flask app if RESUME_PARSING_METHOD was changed after startup.'
             }
             
             return config_info, 200
@@ -1619,19 +1652,83 @@ class ResumeParserDebugConfig(Resource):
             
             # Get new configuration
             import os
-            use_azure_di_env = os.getenv('USE_AZURE_DOCUMENT_INTELLIGENCE', 'false')
+            parsing_method_env = os.getenv('RESUME_PARSING_METHOD', 'spacy')
             
             return {
                 'message': 'Resume parser reset and reinitialized',
                 'new_config': {
-                    'environment_variable': use_azure_di_env,
-                    'parser_uses_azure_di': getattr(resume_parser, 'use_azure_di', None),
-                    'has_azure_client': hasattr(resume_parser, 'azure_di_client'),
+                    'environment_variable': 'RESUME_PARSING_METHOD',
+                    'current_value': parsing_method_env,
+                    'parsing_method': resume_parser.parsing_method,
+                    'available_methods': ['spacy', 'azure_di', 'langextract'],
+                    'has_azure_di_client': hasattr(resume_parser, 'azure_di_client'),
+                    'has_azure_openai_client': hasattr(resume_parser, 'azure_openai_client'),
                     'has_spacy_nlp': hasattr(resume_parser, 'nlp'),
-                    'query_fields_enabled': getattr(resume_parser, 'use_azure_di', False),
-                    'extraction_method': 'Azure DI with Query Fields' if getattr(resume_parser, 'use_azure_di', False) else 'spaCy + NLTK + Regex'
+                    'langextract_available': hasattr(resume_parser, 'parsing_method') and resume_parser.parsing_method == 'langextract'
                 }
             }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, str(e))
+
+@candidate_profile_ns.route('/parse-resume/config-test')
+class ResumeParserConfigTest(Resource):
+    @candidate_profile_ns.doc('test_parser_config')
+    def get(self):
+        """Test current resume parser configuration and show which method will be used"""
+        try:
+            import os
+            from dotenv import load_dotenv
+            
+            # Reload environment variables
+            load_dotenv()
+            
+            # Get fresh parser instance
+            from services.resume_parser import get_resume_parser
+            current_parser = get_resume_parser()
+            
+            parsing_method_env = os.getenv('RESUME_PARSING_METHOD', 'spacy')
+            
+            # Check configuration status
+            config_status = {
+                'environment_variable': {
+                    'RESUME_PARSING_METHOD': parsing_method_env,
+                    'matches_parser': parsing_method_env.lower() == current_parser.parsing_method
+                },
+                'active_method': current_parser.parsing_method,
+                'method_status': {}
+            }
+            
+            # Check each method's availability
+            methods = {
+                'spacy': {
+                    'available': True,
+                    'requirements': 'Always available',
+                    'ready': True
+                },
+                'azure_di': {
+                    'available': bool(os.getenv('AZURE_DI_ENDPOINT') and os.getenv('AZURE_DI_API_KEY')),
+                    'requirements': 'AZURE_DI_ENDPOINT and AZURE_DI_API_KEY',
+                    'ready': hasattr(current_parser, 'azure_di_client')
+                },
+                'langextract': {
+                    'available': bool(os.getenv('AZURE_OPENAI_ENDPOINT') and os.getenv('AZURE_OPENAI_API_KEY')),
+                    'requirements': 'AZURE_OPENAI_* variables (LANGEXTRACT_API_KEY is optional)',
+                    'ready': hasattr(current_parser, 'azure_openai_client'),
+                    'has_gemini_fallback': bool(os.getenv('LANGEXTRACT_API_KEY'))
+                }
+            }
+            
+            config_status['method_status'] = methods
+            
+            # Provide recommendations
+            if parsing_method_env.lower() != current_parser.parsing_method:
+                config_status['warning'] = f"Environment variable is set to '{parsing_method_env}' but parser is using '{current_parser.parsing_method}'. The parser may have fallen back due to missing dependencies."
+            
+            if not methods[current_parser.parsing_method]['ready']:
+                config_status['error'] = f"Current method '{current_parser.parsing_method}' is not properly configured"
+            
+            return config_status, 200
             
         except Exception as e:
             candidate_profile_ns.abort(500, str(e))
