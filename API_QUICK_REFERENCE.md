@@ -15,8 +15,15 @@ POST /api/candidates/semantic-search
 
 ### 👤 **Candidate Management**
 ```javascript
-// Get all candidates
+// Get all candidates (active first, then inactive)
 GET /api/candidates?page=1&per_page=20&include_relationships=true
+
+// Search candidates by name, email, classification, or tags
+GET /api/candidates?search=john
+GET /api/candidates?search=full stack developer,business analyst
+
+// Filter by specific criteria
+GET /api/candidates?sub_classification=react,node.js&is_active=true
 
 // Get specific candidate
 GET /api/candidates/{id}?include_relationships=true

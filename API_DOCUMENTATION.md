@@ -37,22 +37,46 @@ http://localhost:5000/api
 
 **Endpoint:** `GET /candidates`
 
-**Description:** Retrieve a paginated list of all active candidate profiles with optional relationship data.
+**Description:** Retrieve a paginated list of candidate profiles with comprehensive search and filtering capabilities. Active candidates are sorted first, followed by inactive candidates.
 
 **Query Parameters:**
 - `page` (optional): Page number (default: 1)
 - `per_page` (optional): Items per page (default: 10, max: 100)
+- `is_active` (optional): Filter by active status (if not specified, shows all with active first)
+- `search` (optional): Search across name, email, classification, or sub-classification tags (partial match)
+- `classification` (optional): Filter by classification
+- `sub_classification` (optional): Filter by sub-classification tags (comma-separated)
+- `location` (optional): Filter by location
+- `citizenship` (optional): Filter by citizenship/visa status
 - `include_relationships` (optional): Include related data (default: false)
 
-**Request Example:**
+**Request Examples:**
 ```javascript
+// Basic pagination
 fetch('/api/candidates?page=1&per_page=20&include_relationships=true')
+
+// Search by name or email
+fetch('/api/candidates?search=john')
+
+// Search by classification
+fetch('/api/candidates?search=software engineer')
+
+// Search by sub-classification tags (new tag feature)
+fetch('/api/candidates?search=full stack developer,business analyst')
+
+// Filter by specific sub-classification tags
+fetch('/api/candidates?sub_classification=react developer,node.js')
+
+// Combined search and filters
+fetch('/api/candidates?search=python&classification=software&is_active=true')
 ```
 
 **Response (200 OK):**
 ```json
 {
   "candidates": [
+    // Note: Results are sorted with active candidates first, then inactive
+    // sub_classification_of_interest now supports comma-separated tags
     {
       "id": 1,
       "first_name": "John",
@@ -66,7 +90,7 @@ fetch('/api/candidates?page=1&per_page=20&include_relationships=true')
       "right_to_work": true,
       "salary_expectation": 120000.00,
       "classification_of_interest": "Software Engineering",
-      "sub_classification_of_interest": "Full Stack Development",
+      "sub_classification_of_interest": "full stack developer,react developer",
       "is_active": true,
       "remarks": "Open to relocation",
       "ai_short_summary": "5 years of experience in full-stack development...",

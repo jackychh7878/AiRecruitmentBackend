@@ -267,38 +267,78 @@ class CandidateList(Resource):
     @candidate_profile_ns.doc('get_all_candidates')
     @candidate_profile_ns.param('page', 'Page number', type=int, default=1)
     @candidate_profile_ns.param('per_page', 'Items per page', type=int, default=10)
-    @candidate_profile_ns.param('is_active', 'Filter by active status', type=bool)
+    @candidate_profile_ns.param('is_active', 'Filter by active status (if not specified, shows all with active first)', type=bool)
+    @candidate_profile_ns.param('search', 'Search by name, email, classification, or sub-classification tags (partial match)')
     @candidate_profile_ns.param('classification', 'Filter by classification')
-    @candidate_profile_ns.param('sub_classification', 'Filter by sub-classification')
+    @candidate_profile_ns.param('sub_classification', 'Filter by sub-classification tags (comma-separated)')
     @candidate_profile_ns.param('location', 'Filter by location')
     @candidate_profile_ns.param('citizenship', 'Filter by citizenship/visa status')
     @candidate_profile_ns.param('include_relationships', 'Include related data', type=bool, default=False)
     def get(self):
-        """Get all candidates with optional filtering"""
+        """Get all candidates with optional filtering and search (active candidates sorted first)"""
         try:
             # Query parameters for filtering
             page = request.args.get('page', 1, type=int)
             per_page = request.args.get('per_page', 10, type=int)
             is_active = request.args.get('is_active', type=bool)
+            search = request.args.get('search', '').strip()
             classification = request.args.get('classification')
             sub_classification = request.args.get('sub_classification')
             location = request.args.get('location')
             citizenship = request.args.get('citizenship')
             include_relationships = request.args.get('include_relationships', 'false').lower() == 'true'
             
-            # Build query
+            # Build query - show all candidates but sort active first
             query = CandidateMasterProfile.query
             
+            # Filter by active status if specified
             if is_active is not None:
                 query = query.filter(CandidateMasterProfile.is_active == is_active)
+            
+            # Comprehensive search across multiple fields
+            if search:
+                search_term = f'%{search}%'
+                search_conditions = [
+                    CandidateMasterProfile.first_name.ilike(search_term),
+                    CandidateMasterProfile.last_name.ilike(search_term),
+                    CandidateMasterProfile.email.ilike(search_term),
+                    CandidateMasterProfile.classification_of_interest.ilike(search_term),
+                    CandidateMasterProfile.sub_classification_of_interest.ilike(search_term)
+                ]
+                
+                # Also search for individual tags in sub_classification_of_interest
+                # Split search term by comma and search each tag
+                if ',' in search:
+                    for tag in search.split(','):
+                        tag = tag.strip()
+                        if tag:
+                            search_conditions.append(
+                                CandidateMasterProfile.sub_classification_of_interest.ilike(f'%{tag}%')
+                            )
+                
+                query = query.filter(db.or_(*search_conditions))
+            
+            # Additional filters
             if classification:
                 query = query.filter(CandidateMasterProfile.classification_of_interest.ilike(f'%{classification}%'))
             if sub_classification:
-                query = query.filter(CandidateMasterProfile.sub_classification_of_interest.ilike(f'%{sub_classification}%'))
+                # Handle comma-separated tags for sub_classification filter
+                sub_class_conditions = []
+                for tag in sub_classification.split(','):
+                    tag = tag.strip()
+                    if tag:
+                        sub_class_conditions.append(
+                            CandidateMasterProfile.sub_classification_of_interest.ilike(f'%{tag}%')
+                        )
+                if sub_class_conditions:
+                    query = query.filter(db.or_(*sub_class_conditions))
             if location:
                 query = query.filter(CandidateMasterProfile.location.ilike(f'%{location}%'))
             if citizenship:
                 query = query.filter(CandidateMasterProfile.citizenship.ilike(f'%{citizenship}%'))
+            
+            # Sort by active status first (active = True first), then by creation date
+            query = query.order_by(CandidateMasterProfile.is_active.desc(), CandidateMasterProfile.created_date.desc())
             
             # Pagination
             candidates = query.paginate(
