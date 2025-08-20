@@ -13,7 +13,9 @@ from models import (
     CandidateResume
 )
 from services.resume_parser import get_resume_parser
+from services.ai_summary_service import ai_summary_service
 import json
+import asyncio
 from flask import current_app
 from werkzeug.datastructures import FileStorage
 import tempfile
@@ -84,6 +86,8 @@ class BatchResumeParserService:
             'completed_profiles': 0,  # Complete with all mandatory fields
             'incomplete_profiles': 0,  # Missing some mandatory fields but still created
             'failed_files': 0,
+            'ai_summaries_generated': 0,  # Number of candidates with AI summaries
+            'ai_summaries_failed': 0,    # Number of candidates where AI processing failed
             'progress_percentage': 0.0,
             'processing_time_seconds': 0.0,
             'errors': [],
@@ -159,6 +163,8 @@ class BatchResumeParserService:
                 logger.info(f"  Completed profiles: {job_status['completed_profiles']}")
                 logger.info(f"  Incomplete profiles: {job_status['incomplete_profiles']}")
                 logger.info(f"  Failed files: {job_status['failed_files']}")
+                logger.info(f"  AI summaries generated: {job_status['ai_summaries_generated']}")
+                logger.info(f"  AI summaries failed: {job_status['ai_summaries_failed']}")
                 
             except Exception as e:
                 job_status['status'] = 'failed'
@@ -215,6 +221,12 @@ class BatchResumeParserService:
                             job_status['completed_profiles'] += 1
                         else:
                             job_status['incomplete_profiles'] += 1
+                        
+                        # Track AI summary statistics
+                        if result.get('ai_summary_generated', False):
+                            job_status['ai_summaries_generated'] += 1
+                        else:
+                            job_status['ai_summaries_failed'] += 1
                     else:
                         job_status['failed_files'] += 1
                     
@@ -359,6 +371,44 @@ class BatchResumeParserService:
                     # Don't fail the whole process if we can't store the PDF
                 
                 db.session.commit()
+                
+                # Generate AI summary and embedding
+                try:
+                    logger.info(f"Starting AI processing for candidate {candidate.id}")
+                    
+                    # Get complete candidate data with relationships
+                    candidate_with_relationships = candidate.to_dict(include_relationships=True)
+                    
+                    # Run AI processing in async context
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        ai_processing_result = loop.run_until_complete(
+                            ai_summary_service.process_candidate_profile(candidate_with_relationships)
+                        )
+                    finally:
+                        loop.close()
+                        asyncio.set_event_loop(None)
+                    
+                    if ai_processing_result and ai_processing_result.get('processing_success'):
+                        # Update candidate with AI summary and embedding
+                        candidate.ai_short_summary = ai_processing_result['ai_summary']
+                        candidate.embedding_vector = ai_processing_result['embedding_vector']
+                        candidate.last_modified_date = datetime.utcnow()
+                        db.session.commit()
+                        
+                        result['ai_summary_generated'] = True
+                        logger.info(f"AI summary and embedding generated successfully for candidate {candidate.id}")
+                    else:
+                        result['ai_summary_generated'] = False
+                        result['ai_summary_error'] = ai_processing_result.get('error', 'Unknown error')
+                        logger.warning(f"AI processing failed for candidate {candidate.id}: {ai_processing_result.get('error')}")
+                        
+                except Exception as ai_error:
+                    result['ai_summary_generated'] = False
+                    result['ai_summary_error'] = str(ai_error)
+                    logger.warning(f"AI processing failed for candidate {candidate.id}: {str(ai_error)}")
+                    # Don't fail the whole process if AI processing fails
                 
                 result['status'] = 'success'
                 result['candidate_id'] = candidate.id

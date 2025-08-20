@@ -295,6 +295,8 @@ batch_job_status_model = candidate_profile_ns.model('BatchJobStatus', {
     'completed_profiles': fields.Integer(description='Number of profiles with all mandatory fields'),
     'incomplete_profiles': fields.Integer(description='Number of profiles missing mandatory fields'),
     'failed_files': fields.Integer(description='Number of files that failed to process'),
+    'ai_summaries_generated': fields.Integer(description='Number of candidates with AI summaries generated'),
+    'ai_summaries_failed': fields.Integer(description='Number of candidates where AI processing failed'),
     'progress_percentage': fields.Float(description='Progress percentage (0-100)'),
     'processing_time_seconds': fields.Float(description='Total processing time in seconds'),
     'errors': fields.List(fields.String, description='List of error messages'),
@@ -2389,7 +2391,14 @@ class BatchResumeParser(Resource):
     @candidate_profile_ns.marshal_with(batch_parse_response_model)
     def post(self):
         """
-        Batch parse multiple PDF resumes and create candidate profiles in parallel
+        Batch parse multiple PDF resumes and create complete candidate profiles in parallel
+        
+        **FEATURES**:
+        - PDF parsing and data extraction
+        - Complete candidate profile creation (skills, education, experience, etc.)
+        - AI summary generation using Azure OpenAI
+        - Embedding generation for semantic search
+        - Progress tracking and detailed reporting
         
         **SWAGGER UI USERS**: Use the individual file fields (file1, file2, etc.) below.
         Each field accepts one PDF file. You can upload up to 20 files at once via Swagger UI.
@@ -2402,8 +2411,14 @@ class BatchResumeParser(Resource):
         - BATCH_UPLOAD_LIMIT: Total size limit for all files (default: 200MB)
         - MAX_CONTENT_LENGTH: Individual file size limit (default: 16MB)
         
-        This endpoint processes multiple resume files simultaneously using the same 
-        threading configuration as bulk AI regeneration:
+        **PROCESSING PIPELINE**:
+        1. Parse resume content using configured method (spacy/azure_di/langextract)
+        2. Create candidate profile with all related records
+        3. Generate AI summary using Azure OpenAI
+        4. Generate embedding vector for semantic search
+        5. Store complete profile in database
+        
+        **THREADING CONFIGURATION**:
         - AI_BULK_MAX_CONCURRENT_WORKERS: Maximum concurrent workers (default: 5)
         - AI_BULK_RATE_LIMIT_DELAY_SECONDS: Delay between operations (default: 1.0)
         
