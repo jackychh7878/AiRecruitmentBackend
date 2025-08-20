@@ -102,13 +102,103 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Configure file upload limits for batch resume processing
+# Individual file size limit (used for validation in application logic)
+individual_file_limit = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))  # 16MB default
+
+# Total batch upload size limit (used for validation in application logic)
+batch_upload_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))  # 200MB default
+
+# Flask's MAX_CONTENT_LENGTH must be set to the maximum of individual and batch limits
+# This is a hard limit that Flask enforces before the request reaches our code
+# Add significant buffer for form data overhead (headers, boundaries, etc.)
+# Form data can add 20-30% overhead, so we add 100MB buffer to be safe
+flask_max_content_length = max(individual_file_limit, batch_upload_limit) + (100 * 1024 * 1024)  # +100MB buffer
+app.config['MAX_CONTENT_LENGTH'] = flask_max_content_length
+
+# Configure werkzeug form data parser limits
+# Set this to be generous to handle large multipart uploads
+app.config['MAX_FORM_MEMORY_SIZE'] = flask_max_content_length * 2  # Double the content length for form parsing
+
+# Configure additional Werkzeug settings for better file upload handling
+app.config['MAX_FORM_PARTS'] = 1000  # Maximum number of form parts
+app.config['UPLOAD_FOLDER'] = '/tmp'  # Temporary folder for large uploads
+
+# Additional werkzeug multipart parsing settings to handle the specific parsing issue
+# The error suggests werkzeug is trying to parse multipart data as URL-encoded
+# Let's be more explicit about multipart handling
+import tempfile
+app.config['MAX_FORM_MEMORY_SIZE'] = flask_max_content_length  # Restore the memory size limit
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching for uploads
+
+# Set a temporary directory for file uploads to avoid memory issues
+app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
+
+# Additional Flask/Werkzeug settings to handle multipart parsing issues
+# These help prevent the "exceeds capacity limit" error with form parsing
+app.config['MAX_CONTENT_PATH'] = None  # Remove path length restrictions
+app.config['APPLICATION_ROOT'] = '/'  # Ensure proper root path
+
+logger.info(f"File upload limits configured:")
+logger.info(f"  Flask MAX_CONTENT_LENGTH: {app.config['MAX_CONTENT_LENGTH'] / 1024 / 1024:.1f}MB")
+logger.info(f"  Flask MAX_FORM_MEMORY_SIZE: {app.config['MAX_FORM_MEMORY_SIZE'] / 1024 / 1024:.1f}MB")
+logger.info(f"  Individual file limit: {individual_file_limit / 1024 / 1024:.1f}MB")
+logger.info(f"  Batch upload limit: {batch_upload_limit / 1024 / 1024:.1f}MB")
+
 # Initialize SQLAlchemy with app
 db.init_app(app)
 
+# Add a before_request handler to help debug multipart parsing issues
+@app.before_request
+def before_request():
+    """Log request details for debugging multipart upload issues"""
+    if request.endpoint and 'batch-parse-resumes' in request.endpoint:
+        logger.info(f"Before request - Content-Type: {request.content_type}")
+        logger.info(f"Before request - Content-Length: {request.content_length}")
+        # Force multipart parsing to happen in a controlled way
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            try:
+                # This forces werkzeug to parse the form data early
+                # which can help identify parsing issues
+                _ = len(request.form)
+                logger.info("Form data parsing successful")
+            except Exception as e:
+                logger.error(f"Form data parsing failed: {str(e)}")
+
+# Add error handlers for request size limits
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle request entity too large errors with user-friendly messages"""
+    batch_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))
+    batch_limit_mb = batch_limit / 1024 / 1024
+    return jsonify({
+        'error': 'Request too large',
+        'message': f'Upload size exceeds the maximum limit of {batch_limit_mb:.1f}MB. Please reduce the number of files or file sizes and try again.',
+        'code': 413
+    }), 413
+
+@app.errorhandler(400)
+def bad_request(error):
+    """Handle bad request errors, including form parsing issues"""
+    error_description = getattr(error, 'description', str(error))
+    if 'UnicodeDecodeError' in str(error_description) or 'utf-8' in str(error_description):
+        return jsonify({
+            'error': 'Invalid file encoding',
+            'message': 'Invalid file encoding detected. Please ensure all files are valid PDFs.',
+            'code': 400
+        }), 400
+    return jsonify({
+        'error': 'Bad request',
+        'message': str(error_description),
+        'code': 400
+    }), 400
+
 # Initialize bulk AI regeneration service with app context
 from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
+from services.batch_resume_parser import batch_resume_parser_service
 with app.app_context():
     bulk_ai_regeneration_service.set_app(app)
+    batch_resume_parser_service.set_app(app)
 
 # Logging already configured at the top of the file
 

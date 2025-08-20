@@ -52,6 +52,17 @@ AZURE_OPENAI_API_VERSION=2024-02-01
 AZURE_DI_ENDPOINT=https://your-di-resource.cognitiveservices.azure.com/
 AZURE_DI_API_KEY=your_azure_di_api_key
 
+# Bulk Processing Configuration
+# Threading and rate limiting for bulk AI operations and batch resume parsing
+AI_BULK_MAX_CONCURRENT_WORKERS=5
+AI_BULK_RATE_LIMIT_DELAY_SECONDS=1.0
+
+# File Upload Configuration
+# Individual file size limit (in bytes) - default: 16MB
+MAX_CONTENT_LENGTH=16777216
+# Total batch upload size limit (in bytes) - default: 200MB
+BATCH_UPLOAD_LIMIT=209715200
+
 # Database
 DATABASE_URL=your_database_connection_string
 ```

@@ -1,3 +1,4 @@
+import os
 from flask import request
 from flask_restx import Namespace, Resource, fields
 from database import db
@@ -13,10 +14,15 @@ from services.resume_parser import resume_parser, reset_resume_parser
 from services.ai_summary_service import ai_summary_service
 from services.bulk_ai_regeneration_service import bulk_ai_regeneration_service
 from services.semantic_search_service import semantic_search_service
+from services.batch_resume_parser import batch_resume_parser_service
 from flask import current_app
+import logging
 
 # Create namespace
 candidate_profile_ns = Namespace('candidates', description='Candidate profile operations')
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Define relationship models first
 career_history_model = candidate_profile_ns.model('CareerHistory', {
@@ -265,6 +271,71 @@ candidate_list_model = candidate_profile_ns.model('CandidateList', {
     'current_page': fields.Integer(description='Current page number'),
     'per_page': fields.Integer(description='Items per page')
 })
+
+# Batch resume parsing models
+batch_parse_response_model = candidate_profile_ns.model('BatchParseResponse', {
+    'success': fields.Boolean(description='Whether batch parsing was started successfully'),
+    'message': fields.String(description='Status message'),
+    'job_id': fields.String(description='Unique identifier for the batch job'),
+    'batch_number': fields.String(description='Unique batch number for tracking'),
+    'total_files': fields.Integer(description='Total number of files submitted for parsing')
+})
+
+batch_job_status_model = candidate_profile_ns.model('BatchJobStatus', {
+    'job_id': fields.String(description='Job identifier'),
+    'batch_number': fields.String(description='Batch number'),
+    'batch_upload_datetime': fields.String(description='When the batch was uploaded'),
+    'status': fields.String(description='Job status (starting, processing, completed, failed, cancelled)'),
+    'created_at': fields.String(description='When the job was created'),
+    'started_at': fields.String(description='When processing started'),
+    'completed_at': fields.String(description='When processing completed'),
+    'total_files': fields.Integer(description='Total number of files'),
+    'processed_files': fields.Integer(description='Number of files processed'),
+    'successful_profiles': fields.Integer(description='Number of successfully created profiles'),
+    'completed_profiles': fields.Integer(description='Number of profiles with all mandatory fields'),
+    'incomplete_profiles': fields.Integer(description='Number of profiles missing mandatory fields'),
+    'failed_files': fields.Integer(description='Number of files that failed to process'),
+    'progress_percentage': fields.Float(description='Progress percentage (0-100)'),
+    'processing_time_seconds': fields.Float(description='Total processing time in seconds'),
+    'errors': fields.List(fields.String, description='List of error messages'),
+    'results': fields.List(fields.Raw, description='Detailed results for each file')
+})
+
+# Batch upload parser for multiple files
+# Note: Swagger UI has limitations with multiple file uploads using action='append'
+# We'll define individual file arguments for better Swagger UI support
+batch_upload_parser = candidate_profile_ns.parser()
+batch_upload_parser.add_argument('resume_files', 
+                                location='files',
+                                type=FileStorage,
+                                required=True,
+                                action='append',
+                                help='Multiple PDF resume files to parse (select multiple files)')
+
+# Alternative parser for better Swagger UI compatibility
+# Supporting up to 20 files for more practical batch testing
+swagger_batch_upload_parser = candidate_profile_ns.parser()
+
+# Generate file fields dynamically for better maintainability
+def create_swagger_file_fields():
+    """Create file fields for Swagger UI dynamically"""
+    max_swagger_files = 20  # Reasonable limit for Swagger UI testing
+    
+    for i in range(1, max_swagger_files + 1):
+        field_name = f'file{i}'
+        is_required = (i == 1)  # Only first file is required
+        help_text = f'PDF resume file #{i}' + (' (required)' if is_required else ' (optional)')
+        
+        swagger_batch_upload_parser.add_argument(
+            field_name,
+            location='files',
+            type=FileStorage,
+            required=is_required,
+            help=help_text
+        )
+
+# Create the file fields
+create_swagger_file_fields()
 
 @candidate_profile_ns.route('/')
 class CandidateList(Resource):
@@ -2307,4 +2378,315 @@ class CandidateSearchExamples(Resource):
             return examples
             
         except Exception as e:
-            candidate_profile_ns.abort(500, f'Failed to get search examples: {str(e)}') 
+            candidate_profile_ns.abort(500, f'Failed to get search examples: {str(e)}')
+
+# Batch Resume Parsing Endpoints
+
+@candidate_profile_ns.route('/batch-parse-resumes')
+class BatchResumeParser(Resource):
+    @candidate_profile_ns.doc('batch_parse_resumes')
+    @candidate_profile_ns.expect(swagger_batch_upload_parser)
+    @candidate_profile_ns.marshal_with(batch_parse_response_model)
+    def post(self):
+        """
+        Batch parse multiple PDF resumes and create candidate profiles in parallel
+        
+        **SWAGGER UI USERS**: Use the individual file fields (file1, file2, etc.) below.
+        Each field accepts one PDF file. You can upload up to 20 files at once via Swagger UI.
+        
+        **API CLIENTS**: Send files as 'resume_files' array in multipart/form-data format.
+        Can handle up to 50 files per batch (configurable via MAX_FILES_PER_BATCH).
+        
+        **CONFIGURATION LIMITS**:
+        - MAX_FILES_PER_BATCH: Maximum files per batch (default: 50)
+        - BATCH_UPLOAD_LIMIT: Total size limit for all files (default: 200MB)
+        - MAX_CONTENT_LENGTH: Individual file size limit (default: 16MB)
+        
+        This endpoint processes multiple resume files simultaneously using the same 
+        threading configuration as bulk AI regeneration:
+        - AI_BULK_MAX_CONCURRENT_WORKERS: Maximum concurrent workers (default: 5)
+        - AI_BULK_RATE_LIMIT_DELAY_SECONDS: Delay between operations (default: 1.0)
+        
+        Features:
+        - Parallel processing of multiple resumes
+        - Automatic handling of missing mandatory fields (filled with empty strings)
+        - Batch tracking with metadata for each candidate
+        - Status tracking: completed vs incomplete profiles
+        - Progress monitoring and error reporting
+        
+        Returns a job ID for monitoring progress via the status endpoint.
+        """
+        try:
+            # Debug: Log request details to understand the parsing issue
+            logger.info(f"Request Content-Type: {request.content_type}")
+            logger.info(f"Request Content-Length: {request.content_length}")
+            logger.info(f"Request method: {request.method}")
+            
+            try:
+                # IMPORTANT: Handle incorrect Content-Type from frontend
+                # Frontend should send multipart/form-data but sometimes sends application/x-www-form-urlencoded
+                # This causes werkzeug to try parsing binary data as URL-encoded text
+                
+                if request.content_type == 'application/x-www-form-urlencoded':
+                    logger.warning("Frontend sent incorrect Content-Type: application/x-www-form-urlencoded for file upload")
+                    logger.warning("This should be multipart/form-data. Please fix the frontend.")
+                    candidate_profile_ns.abort(400, 
+                        'Invalid request format: File uploads must use multipart/form-data content type, '
+                        'not application/x-www-form-urlencoded. Please check your frontend implementation.')
+                
+                # Handle both original format (resume_files array) and Swagger UI format (individual files)
+                resume_files = []
+                
+                # Try original format first (for API clients)
+                original_files = request.files.getlist('resume_files')
+                if original_files:
+                    resume_files = original_files
+                    logger.info(f"Using original format: found {len(resume_files)} files in 'resume_files' array")
+                else:
+                    # Try Swagger UI format (individual file fields)
+                    try:
+                        args = swagger_batch_upload_parser.parse_args()
+                        # Check all possible file fields dynamically
+                        for i in range(1, 21):  # Support up to 20 files from Swagger
+                            field_name = f'file{i}'
+                            file_obj = args.get(field_name)
+                            if file_obj and file_obj.filename:  # Check if file was actually uploaded
+                                resume_files.append(file_obj)
+                        logger.info(f"Using Swagger format: found {len(resume_files)} files from individual fields")
+                    except Exception as parse_error:
+                        logger.error(f"Parser fallback failed: {str(parse_error)}")
+                        # Final fallback - try to get any files from request
+                        all_files = []
+                        for key in request.files:
+                            all_files.extend(request.files.getlist(key))
+                        resume_files = [f for f in all_files if f.filename]
+                        logger.info(f"Emergency fallback: found {len(resume_files)} files from any field")
+            except Exception as parse_error:
+                error_msg = str(parse_error)
+                logger.error(f"Request parsing error: {error_msg}")
+                
+                # Handle specific error types
+                if 'UnicodeDecodeError' in error_msg or 'utf-8' in error_msg:
+                    candidate_profile_ns.abort(400, 
+                        'Invalid file encoding detected. Please ensure all files are valid PDFs and try again.')
+                elif 'Request Entity Too Large' in error_msg or 'exceeds the capacity limit' in error_msg:
+                    batch_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))
+                    batch_limit_mb = batch_limit / 1024 / 1024
+                    candidate_profile_ns.abort(413, 
+                        f'Total request size is too large. Maximum allowed: {batch_limit_mb:.1f}MB total. '
+                        f'Please reduce the number of files or file sizes and try again.')
+                elif '413' in error_msg or 'too large' in error_msg.lower():
+                    batch_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))
+                    batch_limit_mb = batch_limit / 1024 / 1024
+                    candidate_profile_ns.abort(413, 
+                        f'Upload size exceeds limit. Maximum allowed: {batch_limit_mb:.1f}MB total.')
+                else:
+                    # Generic request parsing error
+                    candidate_profile_ns.abort(400, f'Invalid request format: {error_msg}')
+            
+            # Ensure we have files
+            if not resume_files:
+                candidate_profile_ns.abort(400, 'No resume files provided')
+            
+            # Ensure all files are provided (handle single file case)
+            if not isinstance(resume_files, list):
+                resume_files = [resume_files]
+            
+            # Validate file count (configurable via environment variable)
+            max_files_per_batch = int(os.getenv('MAX_FILES_PER_BATCH', 50))
+            if len(resume_files) > max_files_per_batch:
+                candidate_profile_ns.abort(400, f'Too many files. Maximum {max_files_per_batch} files per batch. '
+                                              f'To process more files, split them into multiple batches or increase MAX_FILES_PER_BATCH.')
+            
+            # Validate files and prepare them for processing
+            max_individual_file_size = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))
+            batch_upload_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))
+            total_size = 0
+            validated_files = []
+            
+            for file in resume_files:
+                # Basic validation
+                if not file or not file.filename:
+                    candidate_profile_ns.abort(400, 'All files must have valid filenames')
+                if not file.filename.lower().endswith('.pdf'):
+                    candidate_profile_ns.abort(400, f'File {file.filename} is not a PDF. Only PDF files are supported.')
+                
+                try:
+                    # Read file content and get size
+                    file.seek(0)  # Ensure we're at the beginning
+                    file_content = file.read()
+                    file_size = len(file_content)
+                    
+                    # Validate that we actually read some content
+                    if file_size == 0:
+                        candidate_profile_ns.abort(400, f'File {file.filename} is empty or corrupted.')
+                        
+                except Exception as file_read_error:
+                    logger.error(f"Error reading file {file.filename}: {str(file_read_error)}")
+                    candidate_profile_ns.abort(400, f'Error reading file {file.filename}. Please ensure the file is not corrupted.')
+                
+                # Check individual file size
+                if file_size > max_individual_file_size:
+                    max_size_mb = max_individual_file_size / 1024 / 1024
+                    file_size_mb = file_size / 1024 / 1024
+                    candidate_profile_ns.abort(413, 
+                        f'File {file.filename} is too large ({file_size_mb:.1f}MB). '
+                        f'Maximum individual file size: {max_size_mb:.1f}MB')
+                
+                total_size += file_size
+                
+                # Store validated file info with content
+                validated_files.append({
+                    'filename': file.filename,
+                    'content': file_content,
+                    'size': file_size
+                })
+            
+            # Check total batch size
+            if total_size > batch_upload_limit:
+                total_size_mb = total_size / 1024 / 1024
+                batch_limit_mb = batch_upload_limit / 1024 / 1024
+                logger.warning(f"Batch size check failed: {total_size_mb:.1f}MB > {batch_limit_mb:.1f}MB")
+                candidate_profile_ns.abort(413, 
+                    f'Total batch size ({total_size_mb:.1f}MB) exceeds limit. '
+                    f'Maximum batch size: {batch_limit_mb:.1f}MB')
+            
+            # Log successful validation
+            total_size_mb = total_size / 1024 / 1024
+            batch_limit_mb = batch_upload_limit / 1024 / 1024
+            logger.info(f"File validation passed: {len(validated_files)} files, {total_size_mb:.3f}MB total (limit: {batch_limit_mb:.1f}MB)")
+            
+            # Set Flask app context for the service
+            batch_resume_parser_service.set_app(current_app._get_current_object())
+            
+            # Start batch processing with validated file data
+            job_id = batch_resume_parser_service.start_batch_parsing(validated_files)
+            job_status = batch_resume_parser_service.get_job_status(job_id)
+            
+            return {
+                'success': True,
+                'message': f'Batch parsing started successfully. Processing {len(validated_files)} files.',
+                'job_id': job_id,
+                'batch_number': job_status['batch_number'],
+                'total_files': len(validated_files)
+            }, 202  # Accepted
+            
+        except ValueError as ve:
+            candidate_profile_ns.abort(400, str(ve))
+        except Exception as e:
+            error_msg = str(e)
+            # Handle file size limit errors specifically
+            if '413' in error_msg or 'Request Entity Too Large' in error_msg or 'exceeds the capacity limit' in error_msg:
+                batch_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))
+                batch_limit_mb = batch_limit / 1024 / 1024
+                candidate_profile_ns.abort(413, 
+                    f'File upload size exceeds limit. Maximum allowed: {batch_limit_mb:.1f}MB total. '
+                    f'Please reduce the number of files or file sizes and try again.')
+            candidate_profile_ns.abort(500, f'Failed to start batch parsing: {error_msg}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/<string:job_id>/status')
+class BatchParseStatus(Resource):
+    @candidate_profile_ns.doc('get_batch_parse_status')
+    @candidate_profile_ns.marshal_with(batch_job_status_model)
+    def get(self, job_id):
+        """
+        Get the status of a batch resume parsing job
+        
+        Returns detailed information about the batch processing progress including:
+        - Overall job status and progress percentage
+        - Number of files processed, successful, completed, and incomplete
+        - Detailed results for each file processed
+        - Any errors encountered during processing
+        """
+        try:
+            job_status = batch_resume_parser_service.get_job_status(job_id)
+            
+            if not job_status:
+                candidate_profile_ns.abort(404, f'Batch job {job_id} not found')
+            
+            return job_status, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get job status: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/<string:job_id>/cancel')
+class BatchParseCancel(Resource):
+    @candidate_profile_ns.doc('cancel_batch_parse')
+    def post(self, job_id):
+        """
+        Cancel a running batch resume parsing job
+        
+        Note: Jobs that are already processing individual files cannot be 
+        immediately stopped, but the job will be marked as cancelled.
+        """
+        try:
+            success = batch_resume_parser_service.cancel_job(job_id)
+            
+            if not success:
+                candidate_profile_ns.abort(400, f'Job {job_id} cannot be cancelled (not found or already completed)')
+            
+            return {
+                'success': True,
+                'message': f'Batch job {job_id} has been cancelled'
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to cancel job: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/jobs')
+class BatchParseJobs(Resource):
+    @candidate_profile_ns.doc('get_all_batch_jobs')
+    def get(self):
+        """
+        Get status of all active batch resume parsing jobs
+        
+        Returns a list of all currently tracked batch jobs with their status.
+        Useful for monitoring multiple batch operations.
+        """
+        try:
+            all_jobs = batch_resume_parser_service.get_all_active_jobs()
+            
+            return {
+                'jobs': list(all_jobs.values()),
+                'total_jobs': len(all_jobs)
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get job list: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/config')
+class BatchParseConfig(Resource):
+    @candidate_profile_ns.doc('get_batch_config')
+    def get(self):
+        """
+        Get current batch upload configuration limits
+        
+        Useful for debugging upload size issues and verifying configuration.
+        """
+        try:
+            individual_file_limit = int(os.getenv('MAX_CONTENT_LENGTH', 16 * 1024 * 1024))
+            batch_upload_limit = int(os.getenv('BATCH_UPLOAD_LIMIT', 200 * 1024 * 1024))
+            flask_max_content = current_app.config.get('MAX_CONTENT_LENGTH', 0)
+            
+            return {
+                'limits': {
+                    'individual_file_limit_bytes': individual_file_limit,
+                    'individual_file_limit_mb': round(individual_file_limit / 1024 / 1024, 1),
+                    'batch_upload_limit_bytes': batch_upload_limit,
+                    'batch_upload_limit_mb': round(batch_upload_limit / 1024 / 1024, 1),
+                    'flask_max_content_length_bytes': flask_max_content,
+                    'flask_max_content_length_mb': round(flask_max_content / 1024 / 1024, 1),
+                    'max_files_per_batch': 50
+                },
+                'environment_variables': {
+                    'MAX_CONTENT_LENGTH': os.getenv('MAX_CONTENT_LENGTH', 'Not set (default: 16MB)'),
+                    'BATCH_UPLOAD_LIMIT': os.getenv('BATCH_UPLOAD_LIMIT', 'Not set (default: 200MB)')
+                },
+                'recommendations': {
+                    'message': 'Flask uses the maximum of individual and batch limits as the hard limit.',
+                    'current_effective_limit_mb': round(flask_max_content / 1024 / 1024, 1)
+                }
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get configuration: {str(e)}') 
