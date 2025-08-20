@@ -2644,10 +2644,10 @@ class BatchParseJobs(Resource):
         Useful for monitoring multiple batch operations.
         """
         try:
-            all_jobs = batch_resume_parser_service.get_all_active_jobs()
+            all_jobs = batch_resume_parser_service.list_jobs()
             
             return {
-                'jobs': list(all_jobs.values()),
+                'jobs': all_jobs,
                 'total_jobs': len(all_jobs)
             }, 200
             
