@@ -1073,6 +1073,7 @@ class ResumeParser:
         return [
             {
                 "full_name": "John Smith",
+                "chinese_name": None,
                 "email": "john.smith@email.com",
                 "phone": "+1-555-123-4567",
                 "location": "San Francisco, CA",
@@ -1145,6 +1146,49 @@ class ResumeParser:
                         "expiration_date": "2024-11-20"
                     }
                 ]
+            },
+            {
+                "full_name": "Li Wei Ming",
+                "chinese_name": "李伟明",
+                "email": "wei.ming.li@email.com",
+                "phone": "+65-9123-4567",
+                "location": "Singapore",
+                "summary": "Data Scientist with expertise in machine learning and statistical analysis",
+                "education": [
+                    {
+                        "degree": "Master of Science in Data Science",
+                        "school": "National University of Singapore",
+                        "field_of_study": "Data Science", 
+                        "start_date": "2019-08-01",
+                        "end_date": "2021-06-15",
+                        "graduation_year": "2021",
+                        "grade": "First Class Honours"
+                    }
+                ],
+                "work_experience": [
+                    {
+                        "title": "Senior Data Scientist",
+                        "company": "TechCorp Asia",
+                        "start_date": "2021-07-01",
+                        "end_date": None,
+                        "duration": "2021-Present",
+                        "description": "Leading machine learning initiatives and data analytics projects"
+                    }
+                ],
+                "skills": "Python, R, SQL, Machine Learning, Statistics, TensorFlow, PyTorch",
+                "languages": [
+                    {"language": "English", "proficiency": "Fluent"},
+                    {"language": "Mandarin", "proficiency": "Native"},
+                    {"language": "Cantonese", "proficiency": "Fluent"}
+                ],
+                "certifications": [
+                    {
+                        "name": "AWS Machine Learning Specialty",
+                        "issuing_organization": "Amazon Web Services",
+                        "issue_date": "2022-03-15",
+                        "expiration_date": "2025-03-15"
+                    }
+                ]
             }
         ]
 
@@ -1160,6 +1204,7 @@ class ResumeParser:
 
             1. Personal Information: 
                - full_name: Complete name of the person
+               - chinese_name: Chinese name if mentioned (can be null)
                - email: Email address
                - phone: Phone number (clean format)
                - location: Current location/address
@@ -1315,6 +1360,7 @@ class ResumeParser:
             name_parts = full_name.split() if full_name else []
             first_name = name_parts[0] if name_parts else None
             last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else None
+            chinese_name = extracted_data.get('chinese_name')
             
             # Parse education
             education_list = []
@@ -1485,6 +1531,7 @@ class ResumeParser:
             parsed_data = {
                 'first_name': first_name,
                 'last_name': last_name,
+                'chinese_name': chinese_name,
                 'email': extracted_data.get('email'),
                 'location': extracted_data.get('location'),
                 'phone_number': extracted_data.get('phone'),
@@ -1760,6 +1807,7 @@ class ResumeParser:
             parsed_data = {
                 'first_name': first_name,
                 'last_name': last_name,
+                'chinese_name': None,  # Azure DI doesn't extract Chinese names by default
                 'email': contact_info.get('email'),
                 'location': location,
                 'phone_number': contact_info.get('phone_number'),
@@ -1838,6 +1886,7 @@ class ResumeParser:
             parsed_data = {
                 'first_name': first_name,
                 'last_name': last_name,
+                'chinese_name': None,  # spaCy doesn't extract Chinese names
                 'email': contact_info.get('email'),
                 'location': location,
                 'phone_number': contact_info.get('phone_number'),
@@ -2398,11 +2447,12 @@ class ResumeParser:
 
             Please extract:
             1. full_name: The person's complete name
-            2. email: Email address
-            3. phone: Phone number (clean format)
-            4. location: Current location/address
-            5. summary: Professional summary or objective
-                         6. education: Array of education records with ALL these fields:
+            2. chinese_name: Chinese name if mentioned (can be null)
+            3. email: Email address
+            4. phone: Phone number (clean format)
+            5. location: Current location/address
+            6. summary: Professional summary or objective
+            7. education: Array of education records with ALL these fields:
                - degree: Full degree name
                - school: Institution name
                - field_of_study: Major/specialization (extract from degree if not explicit)
@@ -2417,7 +2467,7 @@ class ResumeParser:
                - graduation_year: Same as end_date year
                - grade: GPA or honors if mentioned
                - description: Additional details
-                         7. work_experience: Array of work experience with ALL these fields:
+            8. work_experience: Array of work experience with ALL these fields:
                 - title: Job title
                 - company: Company name
                 - start_date: Start date in YYYY-MM-DD format (e.g., "2020-01-15")
@@ -2429,9 +2479,9 @@ class ResumeParser:
                   * Just a start date with no end → end_date: null
                 - duration: Date range (e.g., "2020-2023")
                 - description: Job responsibilities
-            8. skills: Array of technical and professional skills
-            9. languages: Array of languages with proficiency levels
-                         10. certifications: Array with these fields:
+            9. skills: Array of technical and professional skills
+            10. languages: Array of languages with proficiency levels
+            11. certifications: Array with these fields:
                  - name: Certification name
                  - issuing_organization: Organization that issued it
                  - issue_date: Issue date in YYYY-MM-DD format (e.g., "2022-03-15") or null
@@ -2494,6 +2544,7 @@ class ResumeParser:
             name_parts = full_name.split() if full_name else []
             first_name = name_parts[0] if name_parts else None
             last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else None
+            chinese_name = extracted_data.get('chinese_name')
             
             # Parse education
             education_list = []
@@ -2660,6 +2711,7 @@ class ResumeParser:
             return {
                 'first_name': first_name,
                 'last_name': last_name,
+                'chinese_name': chinese_name,
                 'email': extracted_data.get('email'),
                 'location': extracted_data.get('location'),
                 'phone_number': extracted_data.get('phone'),

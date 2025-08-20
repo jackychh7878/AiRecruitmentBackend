@@ -27,6 +27,7 @@ CREATE TABLE candidate_master_profile (
     id SERIAL PRIMARY KEY,
     last_name VARCHAR(100) NOT NULL,
     first_name VARCHAR(100) NOT NULL,
+    chinese_name VARCHAR(200), -- Nullable field for Chinese name
     location VARCHAR(255),
     email VARCHAR(255) UNIQUE NOT NULL,
     phone_number VARCHAR(20),
@@ -36,7 +37,7 @@ CREATE TABLE candidate_master_profile (
     right_to_work BOOLEAN DEFAULT false,
     salary_expectation DECIMAL(12,2),
     classification_of_interest VARCHAR(255),
-    sub_classification_of_interest VARCHAR(255),
+    sub_classification_of_interest VARCHAR(1000), -- Increased size for comma-separated tags
     citizenship VARCHAR(255), -- Citizenship/visa status from predefined options
     is_active BOOLEAN DEFAULT true,
     remarks TEXT,

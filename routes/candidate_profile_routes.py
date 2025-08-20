@@ -105,6 +105,7 @@ semantic_search_result_model = candidate_profile_ns.model('SemanticSearchResult'
     'id': fields.Integer(readonly=True, description='Candidate ID'),
     'first_name': fields.String(description='First name'),
     'last_name': fields.String(description='Last name'),
+    'chinese_name': fields.String(description='Chinese name'),
     'email': fields.String(description='Email address'),
     'location': fields.String(description='Location'),
     'phone_number': fields.String(description='Phone number'),
@@ -161,6 +162,7 @@ candidate_model = candidate_profile_ns.model('Candidate', {
     'id': fields.Integer(readonly=True, description='Candidate ID'),
     'first_name': fields.String(required=True, description='First name'),
     'last_name': fields.String(required=True, description='Last name'),
+    'chinese_name': fields.String(description='Chinese name'),
     'email': fields.String(required=True, description='Email address'),
     'location': fields.String(description='Location'),
     'phone_number': fields.String(description='Phone number'),
@@ -206,6 +208,7 @@ resume_parse_response_model = candidate_profile_ns.model('ResumeParseResponse', 
 candidate_bulk_create_model = candidate_profile_ns.model('CandidateBulkCreate', {
     'first_name': fields.String(required=True, description='First name'),
     'last_name': fields.String(required=True, description='Last name'),
+    'chinese_name': fields.String(description='Chinese name'),
     'email': fields.String(required=True, description='Email address'),
     'location': fields.String(description='Location'),
     'phone_number': fields.String(description='Phone number'),
@@ -238,6 +241,7 @@ candidate_bulk_create_response_model = candidate_profile_ns.model('CandidateBulk
 candidate_input_model = candidate_profile_ns.model('CandidateInput', {
     'first_name': fields.String(required=True, description='First name'),
     'last_name': fields.String(required=True, description='Last name'),
+    'chinese_name': fields.String(description='Chinese name'),
     'email': fields.String(required=True, description='Email address'),
     'location': fields.String(description='Location'),
     'phone_number': fields.String(description='Phone number'),
@@ -268,14 +272,14 @@ class CandidateList(Resource):
     @candidate_profile_ns.param('page', 'Page number', type=int, default=1)
     @candidate_profile_ns.param('per_page', 'Items per page', type=int, default=10)
     @candidate_profile_ns.param('is_active', 'Filter by active status (if not specified, shows all with active first)', type=bool)
-    @candidate_profile_ns.param('search', 'Search by name, email, classification, or sub-classification tags (partial match)')
+    @candidate_profile_ns.param('search', 'Search by name, chinese name, email, classification, or sub-classification tags (partial match)')
     @candidate_profile_ns.param('classification', 'Filter by classification')
     @candidate_profile_ns.param('sub_classification', 'Filter by sub-classification tags (comma-separated)')
     @candidate_profile_ns.param('location', 'Filter by location')
     @candidate_profile_ns.param('citizenship', 'Filter by citizenship/visa status')
     @candidate_profile_ns.param('include_relationships', 'Include related data', type=bool, default=False)
     def get(self):
-        """Get all candidates with optional filtering and search (active candidates sorted first)"""
+        """Get all candidates with optional filtering and search including Chinese names (active candidates sorted first)"""
         try:
             # Query parameters for filtering
             page = request.args.get('page', 1, type=int)
@@ -301,6 +305,7 @@ class CandidateList(Resource):
                 search_conditions = [
                     CandidateMasterProfile.first_name.ilike(search_term),
                     CandidateMasterProfile.last_name.ilike(search_term),
+                    CandidateMasterProfile.chinese_name.ilike(search_term),
                     CandidateMasterProfile.email.ilike(search_term),
                     CandidateMasterProfile.classification_of_interest.ilike(search_term),
                     CandidateMasterProfile.sub_classification_of_interest.ilike(search_term)
@@ -378,6 +383,7 @@ class CandidateList(Resource):
             candidate = CandidateMasterProfile(
                 first_name=data['first_name'],
                 last_name=data['last_name'],
+                chinese_name=data.get('chinese_name'),
                 email=data['email'],
                 location=data.get('location'),
                 phone_number=data.get('phone_number'),
@@ -437,7 +443,7 @@ class Candidate(Resource):
             
             # Update fields
             updatable_fields = [
-                'first_name', 'last_name', 'email', 'location', 'phone_number',
+                'first_name', 'last_name', 'chinese_name', 'email', 'location', 'phone_number',
                 'personal_summary', 'availability_weeks', 'preferred_work_types',
                 'right_to_work', 'salary_expectation', 'classification_of_interest',
                 'sub_classification_of_interest', 'citizenship', 'is_active', 'remarks',
@@ -517,7 +523,7 @@ class Candidate(Resource):
                 
                 # Update fields (excluding AI fields which will be generated)
                 updatable_fields = [
-                    'first_name', 'last_name', 'email', 'location', 'phone_number',
+                    'first_name', 'last_name', 'chinese_name', 'email', 'location', 'phone_number',
                     'personal_summary', 'availability_weeks', 'preferred_work_types',
                     'right_to_work', 'salary_expectation', 'classification_of_interest',
                     'sub_classification_of_interest', 'citizenship', 'is_active', 'remarks', 'metadata_json'
@@ -1234,7 +1240,8 @@ class CandidateResumeParser(Resource):
                     },
                     'name_extracted': {
                         'first_name': bool(parsed_data.get('first_name')),
-                        'last_name': bool(parsed_data.get('last_name'))
+                        'last_name': bool(parsed_data.get('last_name')),
+                        'chinese_name': bool(parsed_data.get('chinese_name'))
                     }
                 }
                 
@@ -1348,6 +1355,7 @@ class CandidateCreateWithPDF(Resource):
                 candidate = CandidateMasterProfile(
                     first_name=data['first_name'],
                     last_name=data['last_name'],
+                    chinese_name=data.get('chinese_name'),
                     email=data['email'],
                     location=data.get('location'),
                     phone_number=data.get('phone_number'),
@@ -1585,7 +1593,7 @@ class CandidateResumeParserInfo(Resource):
                 'max_file_size_mb': 10,
                 'extractable_information': {
                     'personal_info': [
-                        'First name', 'Last name', 'Email', 'Phone number', 'Location'
+                        'First name', 'Last name', 'Chinese name', 'Email', 'Phone number', 'Location'
                     ],
                     'professional_info': [
                         'Work experience', 'Job titles', 'Company names', 'Skills'
@@ -1810,6 +1818,7 @@ class CandidateBulkCreate(Resource):
                 candidate = CandidateMasterProfile(
                     first_name=data['first_name'],
                     last_name=data['last_name'],
+                    chinese_name=data.get('chinese_name'),
                     email=data['email'],
                     location=data.get('location'),
                     phone_number=data.get('phone_number'),

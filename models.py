@@ -9,6 +9,7 @@ class CandidateMasterProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     last_name = db.Column(db.String(100), nullable=False)
     first_name = db.Column(db.String(100), nullable=False)
+    chinese_name = db.Column(db.String(200))  # Nullable field for Chinese name
     location = db.Column(db.String(255))
     email = db.Column(db.String(255), unique=True, nullable=False)
     phone_number = db.Column(db.String(20))
@@ -18,7 +19,7 @@ class CandidateMasterProfile(db.Model):
     right_to_work = db.Column(db.Boolean, default=False)
     salary_expectation = db.Column(db.Numeric(12, 2))
     classification_of_interest = db.Column(db.String(255))
-    sub_classification_of_interest = db.Column(db.String(255))
+    sub_classification_of_interest = db.Column(db.String(1000))  # Increased size for comma-separated tags
     citizenship = db.Column(db.String(255))
     is_active = db.Column(db.Boolean, default=True)
     remarks = db.Column(db.Text)
@@ -41,6 +42,7 @@ class CandidateMasterProfile(db.Model):
             'id': self.id,
             'last_name': self.last_name,
             'first_name': self.first_name,
+            'chinese_name': self.chinese_name,
             'location': self.location,
             'email': self.email,
             'phone_number': self.phone_number,

@@ -18,8 +18,9 @@ POST /api/candidates/semantic-search
 // Get all candidates (active first, then inactive)
 GET /api/candidates?page=1&per_page=20&include_relationships=true
 
-// Search candidates by name, email, classification, or tags
+// Search candidates by name, Chinese name, email, classification, or tags
 GET /api/candidates?search=john
+GET /api/candidates?search=李伟明
 GET /api/candidates?search=full stack developer,business analyst
 
 // Filter by specific criteria

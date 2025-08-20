@@ -43,7 +43,7 @@ http://localhost:5000/api
 - `page` (optional): Page number (default: 1)
 - `per_page` (optional): Items per page (default: 10, max: 100)
 - `is_active` (optional): Filter by active status (if not specified, shows all with active first)
-- `search` (optional): Search across name, email, classification, or sub-classification tags (partial match)
+- `search` (optional): Search across name, Chinese name, email, classification, or sub-classification tags (partial match)
 - `classification` (optional): Filter by classification
 - `sub_classification` (optional): Filter by sub-classification tags (comma-separated)
 - `location` (optional): Filter by location
@@ -55,8 +55,9 @@ http://localhost:5000/api
 // Basic pagination
 fetch('/api/candidates?page=1&per_page=20&include_relationships=true')
 
-// Search by name or email
+// Search by name, Chinese name, or email
 fetch('/api/candidates?search=john')
+fetch('/api/candidates?search=李伟明')
 
 // Search by classification
 fetch('/api/candidates?search=software engineer')
@@ -81,6 +82,7 @@ fetch('/api/candidates?search=python&classification=software&is_active=true')
       "id": 1,
       "first_name": "John",
       "last_name": "Doe",
+      "chinese_name": null,
       "email": "john.doe@email.com",
       "location": "New York, NY",
       "phone_number": "+1-555-0123",
@@ -159,6 +161,7 @@ fetch('/api/candidates/1?include_relationships=true')
 {
   "first_name": "Jane",
   "last_name": "Smith",
+  "chinese_name": "李小明",
   "email": "jane.smith@email.com",
   "location": "San Francisco, CA",
   "phone_number": "+1-555-0456",
@@ -488,6 +491,7 @@ fetch('/api/candidates/parse-resume', {
   "parsed_data": {
     "first_name": "John",
     "last_name": "Doe",
+    "chinese_name": null,
     "email": "john.doe@email.com",
     "phone_number": "+1-555-0123",
     "personal_summary": "Experienced software engineer...",
@@ -955,6 +959,7 @@ interface CandidateProfile {
   id: number;
   first_name: string;
   last_name: string;
+  chinese_name?: string;
   email: string;
   location?: string;
   phone_number?: string;
