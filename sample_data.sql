@@ -110,7 +110,7 @@ INSERT INTO ai_recruitment_com_code (category, com_code, description) VALUES
 ('Sub classification of interest', 'Computer Operator', 'Computer operators'),
 ('Sub classification of interest', 'Consultant', 'IT consultants'),
 ('Sub classification of interest', 'Database Development & Administration', 'Database development and administration'),
-('Sub classification of interest', 'Developers/Programmer', 'Software developers and programmers'),
+('Sub classification of interest', 'Developer/Programmer', 'Software developers and programmers'),
 ('Sub classification of interest', 'Engineering - Hardware', 'Hardware engineering'),
 ('Sub classification of interest', 'Engineering - Network', 'Network engineering'),
 ('Sub classification of interest', 'Analyst Programmer', 'Analyst Programmer'),
@@ -145,7 +145,7 @@ INSERT INTO candidate_master_profile (
     'Smith', 'John', 'Central, Hong Kong', 'john.smith@email.com', '+852 9123 4567',
     'Experienced software engineer with 5+ years in full-stack development. Passionate about building scalable web applications and working with modern technologies.',
     2, 'Full time,Remote', true, 480000.00,
-    'Information & Communication Technology', 'Developers/Programmers',
+    'Information & Communication Technology', 'Developer/Programmer',
     'Open to relocation for the right opportunity',
     'Senior software engineer with strong full-stack experience, looking for challenging role in tech company'
 ),
