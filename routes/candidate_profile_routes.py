@@ -2608,6 +2608,8 @@ class BatchResumeParser(Resource):
 class BatchParseStatus(Resource):
     @candidate_profile_ns.doc('get_batch_parse_status')
     @candidate_profile_ns.marshal_with(batch_job_status_model)
+    @candidate_profile_ns.response(404, 'Batch job not found')
+    @candidate_profile_ns.response(500, 'Internal server error')
     def get(self, job_id):
         """
         Get the status of a batch resume parsing job
@@ -2618,16 +2620,31 @@ class BatchParseStatus(Resource):
         - Detailed results for each file processed
         - Any errors encountered during processing
         """
+        # Log the job_id for debugging
+        logger.info(f"Getting status for batch job: {job_id}")
+        
+        # Ensure the service is properly initialized
+        if not batch_resume_parser_service:
+            logger.error("batch_resume_parser_service is not initialized")
+            candidate_profile_ns.abort(500, 'Batch parsing service not available')
+        
+        # Get job status from service (with error handling)
         try:
             job_status = batch_resume_parser_service.get_job_status(job_id)
-            
-            if not job_status:
-                candidate_profile_ns.abort(404, f'Batch job {job_id} not found')
-            
-            return job_status, 200
-            
         except Exception as e:
-            candidate_profile_ns.abort(500, f'Failed to get job status: {str(e)}')
+            # Log the exception for debugging service errors
+            logger.error(f"Service error getting batch job status for {job_id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            candidate_profile_ns.abort(500, f'Service error: {str(e)}')
+        
+        # Check if job exists - return 404 if not found (outside try-catch)
+        if job_status is None:
+            logger.warning(f"Batch job not found: {job_id}")
+            candidate_profile_ns.abort(404, f'Batch job {job_id} not found')
+        
+        logger.info(f"Successfully retrieved status for batch job: {job_id}")
+        return job_status, 200
 
 @candidate_profile_ns.route('/batch-parse-resumes/<string:job_id>/cancel')
 class BatchParseCancel(Resource):
@@ -2710,6 +2727,56 @@ class BatchParseConfig(Resource):
             
         except Exception as e:
             candidate_profile_ns.abort(500, f'Failed to get configuration: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/debug')
+class BatchParseDebug(Resource):
+    @candidate_profile_ns.doc('debug_batch_service')
+    def get(self):
+        """
+        Debug endpoint to check batch parsing service status
+        
+        Useful for troubleshooting 500 errors and service initialization issues.
+        """
+        try:
+            debug_info = {
+                'service_initialized': batch_resume_parser_service is not None,
+                'service_type': type(batch_resume_parser_service).__name__ if batch_resume_parser_service else None,
+                'active_jobs_count': 0,
+                'active_jobs_keys': [],
+                'service_has_active_jobs_attr': False,
+                'service_errors': []
+            }
+            
+            if batch_resume_parser_service:
+                try:
+                    debug_info['service_has_active_jobs_attr'] = hasattr(batch_resume_parser_service, 'active_jobs')
+                    if hasattr(batch_resume_parser_service, 'active_jobs'):
+                        active_jobs = getattr(batch_resume_parser_service, 'active_jobs', {})
+                        debug_info['active_jobs_count'] = len(active_jobs)
+                        debug_info['active_jobs_keys'] = list(active_jobs.keys())
+                        debug_info['active_jobs_type'] = type(active_jobs).__name__
+                    else:
+                        debug_info['service_errors'].append('Service missing active_jobs attribute')
+                        
+                    # Test getting a non-existent job
+                    test_result = batch_resume_parser_service.get_job_status('test_non_existent')
+                    debug_info['test_non_existent_job_result'] = {
+                        'result': test_result,
+                        'result_type': type(test_result).__name__,
+                        'is_none': test_result is None
+                    }
+                except Exception as service_error:
+                    debug_info['service_errors'].append(f'Error testing service: {str(service_error)}')
+            else:
+                debug_info['service_errors'].append('Service is None or not initialized')
+            
+            return debug_info, 200
+            
+        except Exception as e:
+            return {
+                'debug_error': f'Failed to debug service: {str(e)}',
+                'traceback': str(e)
+            }, 500
 
 @candidate_profile_ns.route('/batch-parse-resumes/classification-stats')
 class ClassificationStats(Resource):

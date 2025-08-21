@@ -112,7 +112,25 @@ class BatchResumeParserService:
     
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get the status of a batch parsing job"""
-        return self.active_jobs.get(job_id)
+        try:
+            if not job_id:
+                logger.warning("get_job_status called with empty job_id")
+                return None
+            
+            if not hasattr(self, 'active_jobs') or self.active_jobs is None:
+                logger.error("active_jobs not initialized")
+                return None
+                
+            result = self.active_jobs.get(job_id)
+            if result is None:
+                logger.info(f"Job {job_id} not found in active_jobs. Available jobs: {list(self.active_jobs.keys())}")
+            else:
+                logger.debug(f"Found job {job_id} with status: {result.get('status', 'unknown')}")
+                
+            return result
+        except Exception as e:
+            logger.error(f"Error in get_job_status for {job_id}: {str(e)}")
+            return None
     
     def list_jobs(self) -> List[Dict[str, Any]]:
         """Get list of all jobs (active and completed)"""
