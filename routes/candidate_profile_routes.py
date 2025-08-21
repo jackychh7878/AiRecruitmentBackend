@@ -202,6 +202,11 @@ resume_upload_parser.add_argument('resume_file',
                                  type=FileStorage,
                                  required=True,
                                  help='PDF resume file to parse')
+resume_upload_parser.add_argument('enable_ai_classification',
+                                 location='form',
+                                 type=bool,
+                                 default=True,
+                                 help='Enable AI-powered industry and role classification (default: true)')
 
 resume_parse_response_model = candidate_profile_ns.model('ResumeParseResponse', {
     'success': fields.Boolean(description='Whether parsing was successful'),
@@ -1250,20 +1255,48 @@ class CandidateResumeParser(Resource):
     @candidate_profile_ns.expect(resume_upload_parser)
     def post(self):
         """
-        Parse PDF resume and extract candidate information using configurable parsing methods
+        Parse PDF resume and extract candidate information with AI-powered classification
         
+        **FEATURES**:
+        - PDF parsing and data extraction using configurable parsing methods
+        - AI-powered industry classification (using lookup data)
+        - AI-powered role tag assignment (supports multiple roles)
+        - Comprehensive completeness scoring
+        - Detailed parsing statistics
+        
+        **PARSING METHODS**:
         This endpoint supports multiple parsing methods based on the RESUME_PARSING_METHOD environment variable:
         - 'spacy': Traditional NER with spaCy and NLTK (default)
         - 'azure_di': Azure Document Intelligence with query fields
         - 'langextract': LangExtract with Gemini API or Azure OpenAI fallback
         
-        Environment Variables:
+        **ENVIRONMENT VARIABLES**:
         - RESUME_PARSING_METHOD: Set to 'spacy', 'azure_di', or 'langextract'
         - For azure_di: Requires AZURE_DI_ENDPOINT and AZURE_DI_API_KEY
         - For langextract: Requires AZURE_OPENAI_* variables, optionally LANGEXTRACT_API_KEY
         
+        **PROCESSING PIPELINE**:
+        1. Parse resume content using configured method (spacy/azure_di/langextract)
+        2. Extract entities (name, contact, experience, skills, education, etc.)
+        3. AI classification - determine industry and role tags from lookup data
+        4. Calculate completeness score including classification data
+        5. Return structured candidate data with classification tags
+        
+        **AI CLASSIFICATION** (Optional):
+        - Can be enabled/disabled via 'enable_ai_classification' parameter (default: true)
+        - Automatically determines industry classification (e.g., "Information & Communication Technology")
+        - Assigns relevant role tags (e.g., ["Data Analyst", "Software Developer"])
+        - Uses Azure OpenAI to analyze resume content against predefined lookup codes
+        - Provides reasoning for classification decisions
+        - Gracefully handles failures without affecting the main parsing process
+        
+        **PARAMETERS**:
+        - resume_file: PDF file to parse (required)
+        - enable_ai_classification: Enable/disable AI classification (optional, default: true)
+        
         Returns structured candidate data that can be used to prefill 
-        candidate creation forms in the frontend.
+        candidate creation forms in the frontend, optionally including AI-determined 
+        classification and role tags.
         """
         try:
             # Validate file upload
@@ -1289,6 +1322,9 @@ class CandidateResumeParser(Resource):
                 
             if file_size == 0:
                 candidate_profile_ns.abort(400, 'File is empty')
+            
+            # Get parameters
+            enable_ai_classification = request.form.get('enable_ai_classification', 'true').lower() == 'true'
             
             # Parse the resume using the configured parsing service
             try:
@@ -1343,10 +1379,86 @@ class CandidateResumeParser(Resource):
                     'environment_variable': 'RESUME_PARSING_METHOD'
                 }
                 
+                # Perform AI classification for industry and role tags (if enabled)
+                classification_result = None
+                if enable_ai_classification:
+                    try:
+                        logger.info(f"Starting AI classification for parsed resume: {file.filename}")
+                        
+                        from services.candidate_classification_service import candidate_classification_service
+                        
+                        # Run AI classification in async context
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        try:
+                            classification_result = loop.run_until_complete(
+                                candidate_classification_service.classify_candidate(parsed_data)
+                            )
+                        finally:
+                            loop.close()
+                            asyncio.set_event_loop(None)
+                        
+                        if classification_result.get('classification_success'):
+                            # Update parsed data with AI classification
+                            if classification_result.get('classification_of_interest'):
+                                parsed_data['classification_of_interest'] = classification_result['classification_of_interest']
+                            if classification_result.get('sub_classification_of_interest'):
+                                parsed_data['sub_classification_of_interest'] = classification_result['sub_classification_of_interest']
+                            
+                            parsing_stats['ai_classification'] = {
+                                'success': True,
+                                'classification_of_interest': classification_result.get('classification_of_interest'),
+                                'sub_classification_of_interest': classification_result.get('sub_classification_of_interest'),
+                                'reasoning': classification_result.get('reasoning', ''),
+                                'message': 'AI classification completed successfully'
+                            }
+                            
+                            logger.info(f"AI classification successful: {classification_result['classification_of_interest']} | {classification_result['sub_classification_of_interest']}")
+                        else:
+                            parsing_stats['ai_classification'] = {
+                                'success': False,
+                                'error': classification_result.get('error', 'Unknown error'),
+                                'message': 'AI classification failed'
+                            }
+                            logger.warning(f"AI classification failed: {classification_result.get('error')}")
+                            
+                    except Exception as classification_error:
+                        parsing_stats['ai_classification'] = {
+                            'success': False,
+                            'error': str(classification_error),
+                            'message': 'AI classification failed due to service error'
+                        }
+                        logger.warning(f"AI classification failed: {str(classification_error)}")
+                        # Don't fail the whole process if classification fails
+                else:
+                    parsing_stats['ai_classification'] = {
+                        'enabled': False,
+                        'message': 'AI classification disabled by user request'
+                    }
+                
+                # Update parsing statistics with classification info
+                if classification_result and classification_result.get('classification_success'):
+                    completeness_factors.extend([
+                        bool(parsed_data.get('classification_of_interest')),
+                        bool(parsed_data.get('sub_classification_of_interest'))
+                    ])
+                    completeness_score = sum(completeness_factors) / len(completeness_factors) * 100
+                    parsing_stats['completeness_score'] = round(completeness_score, 1)
+                
+                # Update message to include classification status
+                classification_status = ""
+                if parsing_stats.get('ai_classification', {}).get('success'):
+                    classification_status = " with AI industry and role classification"
+                elif parsing_stats.get('ai_classification', {}).get('enabled') == False:
+                    classification_status = " (AI classification disabled)"
+                elif 'ai_classification' in parsing_stats:
+                    classification_status = " (AI classification attempted but failed)"
+                
                 # Prepare response
                 response_data = {
                     'success': True,
-                    'message': f'Resume parsed successfully using {current_parser.parsing_method} method. Extracted {sum(parsing_stats["entities_extracted"].values())} entities with {parsing_stats["completeness_score"]}% completeness.',
+                    'message': f'Resume parsed successfully using {current_parser.parsing_method} method. Extracted {sum(parsing_stats["entities_extracted"].values())} entities with {parsing_stats["completeness_score"]}% completeness{classification_status}.',
                     'candidate_data': parsed_data,
                     'parsing_stats': parsing_stats
                 }
