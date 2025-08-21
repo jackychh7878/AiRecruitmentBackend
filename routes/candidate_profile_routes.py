@@ -5,7 +5,7 @@ from database import db
 from models import (
     CandidateMasterProfile, CandidateCareerHistory, CandidateSkills,
     CandidateEducation, CandidateLicensesCertifications, CandidateLanguages,
-    CandidateResume, AiPromptTemplate
+    CandidateResume, AiPromptTemplate, BatchJobStatus, BatchJobFailedFile
 )
 from datetime import datetime
 import json
@@ -2580,7 +2580,7 @@ class BatchResumeParser(Resource):
             batch_resume_parser_service.set_app(current_app._get_current_object())
             
             # Start batch processing with validated file data
-            job_id = batch_resume_parser_service.start_batch_parsing(validated_files)
+            job_id = batch_resume_parser_service.start_batch_parsing(validated_files, created_by='user')
             job_status = batch_resume_parser_service.get_job_status(job_id)
             
             return {
@@ -2799,4 +2799,167 @@ class ClassificationStats(Resource):
             }, 200
             
         except Exception as e:
-            candidate_profile_ns.abort(500, f'Failed to get classification statistics: {str(e)}') 
+            candidate_profile_ns.abort(500, f'Failed to get classification statistics: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/<string:job_id>/failed-files')
+class BatchParseFailedFiles(Resource):
+    @candidate_profile_ns.doc('get_batch_failed_files')
+    def get(self, job_id):
+        """
+        Get detailed information about failed files in a batch job
+        
+        Returns a list of files that failed to process with detailed error information
+        including filename, error reason, failure stage, and other metadata.
+        """
+        try:
+            # Get the batch job
+            job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+            if not job_record:
+                candidate_profile_ns.abort(404, f'Batch job {job_id} not found')
+            
+            # Get failed files for this job
+            failed_files = BatchJobFailedFile.query.filter_by(batch_job_id=job_record.id).all()
+            
+            return {
+                'job_id': job_id,
+                'batch_number': job_record.batch_number,
+                'total_failed_files': len(failed_files),
+                'failed_files': [failed_file.to_dict() for failed_file in failed_files]
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get failed files: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/history')
+class BatchParseHistory(Resource):
+    @candidate_profile_ns.doc('get_batch_history')
+    @candidate_profile_ns.param('page', 'Page number', type=int, default=1)
+    @candidate_profile_ns.param('per_page', 'Items per page', type=int, default=20)
+    @candidate_profile_ns.param('status', 'Filter by status (queued, processing, completed, failed, cancelled)')
+    @candidate_profile_ns.param('created_by', 'Filter by user who created the job')
+    def get(self):
+        """
+        Get paginated history of all batch parsing jobs
+        
+        Returns a paginated list of batch jobs with filtering options.
+        Useful for monitoring and auditing batch operations.
+        """
+        try:
+            page = request.args.get('page', 1, type=int)
+            per_page = min(request.args.get('per_page', 20, type=int), 100)
+            status_filter = request.args.get('status')
+            created_by_filter = request.args.get('created_by')
+            
+            # Build query
+            query = BatchJobStatus.query
+            
+            if status_filter:
+                query = query.filter(BatchJobStatus.status == status_filter)
+            
+            if created_by_filter:
+                query = query.filter(BatchJobStatus.created_by.ilike(f'%{created_by_filter}%'))
+            
+            # Order by creation date (most recent first)
+            query = query.order_by(BatchJobStatus.created_at.desc())
+            
+            # Paginate
+            paginated_jobs = query.paginate(
+                page=page, per_page=per_page, error_out=False
+            )
+            
+            return {
+                'jobs': [job.to_dict(include_details=False) for job in paginated_jobs.items],
+                'pagination': {
+                    'page': page,
+                    'per_page': per_page,
+                    'total': paginated_jobs.total,
+                    'pages': paginated_jobs.pages,
+                    'has_next': paginated_jobs.has_next,
+                    'has_prev': paginated_jobs.has_prev
+                },
+                'filters': {
+                    'status': status_filter,
+                    'created_by': created_by_filter
+                }
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get batch history: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/statistics')
+class BatchParseStatistics(Resource):
+    @candidate_profile_ns.doc('get_batch_statistics')
+    def get(self):
+        """
+        Get overall statistics about batch parsing operations
+        
+        Returns summary statistics including total jobs, success rates,
+        processing times, and other metrics.
+        """
+        try:
+            # Get overall job statistics
+            total_jobs = BatchJobStatus.query.count()
+            completed_jobs = BatchJobStatus.query.filter_by(status='completed').count()
+            failed_jobs = BatchJobStatus.query.filter_by(status='failed').count()
+            processing_jobs = BatchJobStatus.query.filter_by(status='processing').count()
+            queued_jobs = BatchJobStatus.query.filter_by(status='queued').count()
+            cancelled_jobs = BatchJobStatus.query.filter_by(status='cancelled').count()
+            
+            # Get file processing statistics
+            total_files_processed = db.session.query(db.func.sum(BatchJobStatus.processed_files)).scalar() or 0
+            total_successful_profiles = db.session.query(db.func.sum(BatchJobStatus.successful_profiles)).scalar() or 0
+            total_failed_files = db.session.query(db.func.sum(BatchJobStatus.failed_files)).scalar() or 0
+            total_completed_profiles = db.session.query(db.func.sum(BatchJobStatus.completed_profiles)).scalar() or 0
+            total_incomplete_profiles = db.session.query(db.func.sum(BatchJobStatus.incomplete_profiles)).scalar() or 0
+            
+            # Calculate success rates
+            job_success_rate = (completed_jobs / total_jobs * 100) if total_jobs > 0 else 0
+            file_success_rate = (total_successful_profiles / total_files_processed * 100) if total_files_processed > 0 else 0
+            profile_completion_rate = (total_completed_profiles / total_successful_profiles * 100) if total_successful_profiles > 0 else 0
+            
+            # Get AI processing statistics
+            total_ai_summaries_generated = db.session.query(db.func.sum(BatchJobStatus.ai_summaries_generated)).scalar() or 0
+            total_ai_summaries_failed = db.session.query(db.func.sum(BatchJobStatus.ai_summaries_failed)).scalar() or 0
+            total_classifications_generated = db.session.query(db.func.sum(BatchJobStatus.classifications_generated)).scalar() or 0
+            total_classifications_failed = db.session.query(db.func.sum(BatchJobStatus.classifications_failed)).scalar() or 0
+            
+            ai_summary_success_rate = (total_ai_summaries_generated / (total_ai_summaries_generated + total_ai_summaries_failed) * 100) if (total_ai_summaries_generated + total_ai_summaries_failed) > 0 else 0
+            classification_success_rate = (total_classifications_generated / (total_classifications_generated + total_classifications_failed) * 100) if (total_classifications_generated + total_classifications_failed) > 0 else 0
+            
+            # Get recent activity (last 24 hours)
+            from datetime import datetime, timedelta
+            last_24h = datetime.utcnow() - timedelta(hours=24)
+            recent_jobs = BatchJobStatus.query.filter(BatchJobStatus.created_at >= last_24h).count()
+            
+            return {
+                'job_statistics': {
+                    'total_jobs': total_jobs,
+                    'completed_jobs': completed_jobs,
+                    'failed_jobs': failed_jobs,
+                    'processing_jobs': processing_jobs,
+                    'queued_jobs': queued_jobs,
+                    'cancelled_jobs': cancelled_jobs,
+                    'job_success_rate_percentage': round(job_success_rate, 2),
+                    'recent_jobs_24h': recent_jobs
+                },
+                'file_processing_statistics': {
+                    'total_files_processed': total_files_processed,
+                    'total_successful_profiles': total_successful_profiles,
+                    'total_failed_files': total_failed_files,
+                    'total_completed_profiles': total_completed_profiles,
+                    'total_incomplete_profiles': total_incomplete_profiles,
+                    'file_success_rate_percentage': round(file_success_rate, 2),
+                    'profile_completion_rate_percentage': round(profile_completion_rate, 2)
+                },
+                'ai_processing_statistics': {
+                    'ai_summaries_generated': total_ai_summaries_generated,
+                    'ai_summaries_failed': total_ai_summaries_failed,
+                    'ai_summary_success_rate_percentage': round(ai_summary_success_rate, 2),
+                    'classifications_generated': total_classifications_generated,
+                    'classifications_failed': total_classifications_failed,
+                    'classification_success_rate_percentage': round(classification_success_rate, 2)
+                }
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get batch statistics: {str(e)}') 

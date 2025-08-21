@@ -10,7 +10,7 @@ from database import db
 from models import (
     CandidateMasterProfile, CandidateCareerHistory, CandidateSkills,
     CandidateEducation, CandidateLicensesCertifications, CandidateLanguages,
-    CandidateResume
+    CandidateResume, BatchJobStatus, BatchJobFailedFile
 )
 from services.resume_parser import get_resume_parser
 from services.ai_summary_service import ai_summary_service
@@ -56,153 +56,172 @@ class BatchResumeParserService:
         self.app = app
         logger.info("Flask app context set for batch resume parser")
     
-    def start_batch_parsing(self, validated_files: List[Dict[str, Any]]) -> str:
+    def start_batch_parsing(self, validated_files: List[Dict[str, Any]], created_by: str = 'user') -> str:
         """
-        Start a new batch parsing job
+        Start a new batch parsing job with database persistence
         
         Args:
             validated_files: List of file dictionaries with 'filename', 'content', 'size' keys
+            created_by: User who initiated the job
             
         Returns:
             job_id: Unique identifier for tracking the job
         """
-        # Generate unique job ID and batch metadata
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        self.job_counter += 1
-        job_id = f"batch_parse_{timestamp}_{self.job_counter}"
-        batch_number = f"BATCH_{timestamp}_{self.job_counter}"
-        batch_upload_datetime = datetime.utcnow().isoformat()
+        # Ensure we have app context for database operations
+        if not self.app:
+            raise Exception("Flask app not set. Call set_app() before starting jobs.")
         
-        # Initialize job status
-        job_status = {
-            'job_id': job_id,
-            'batch_number': batch_number,
-            'status': 'queued',
-            'created_at': datetime.utcnow().isoformat(),
-            'started_at': None,
-            'completed_at': None,
-            'total_files': len(validated_files),
-            'processed_files': 0,
-            'successful_profiles': 0,
-            'completed_profiles': 0,  # Complete with all mandatory fields
-            'incomplete_profiles': 0,  # Missing some mandatory fields but still created
-            'failed_files': 0,
-            'ai_summaries_generated': 0,  # Number of candidates with AI summaries
-            'ai_summaries_failed': 0,    # Number of candidates where AI processing failed
-            'classifications_generated': 0,  # Number of candidates with AI classifications
-            'classifications_failed': 0,    # Number of candidates where classification failed
-            'progress_percentage': 0.0,
-            'processing_time_seconds': 0.0,
-            'errors': [],
-            'results': []
-        }
-        
-        self.active_jobs[job_id] = job_status
-        
-        # Start processing in background thread
-        thread = threading.Thread(
-            target=self._run_batch_parsing,
-            args=(job_id, validated_files, batch_number, batch_upload_datetime)
-        )
-        thread.daemon = True
-        thread.start()
-        
-        logger.info(f"Started batch parsing job {job_id} with {len(validated_files)} files")
-        return job_id
+        with self.app.app_context():
+            # Generate unique job ID and batch metadata
+            timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            self.job_counter += 1
+            job_id = f"batch_parse_{timestamp}_{self.job_counter}"
+            batch_number = f"BATCH_{timestamp}_{self.job_counter}"
+            
+            # Create database record for the job
+            job_record = BatchJobStatus.create_new_job(
+                job_id=job_id,
+                batch_number=batch_number,
+                total_files=len(validated_files),
+                created_by=created_by
+            )
+            
+            logger.info(f"Created database record for batch job {job_id} with {len(validated_files)} files")
+            
+            # Start processing in background thread
+            thread = threading.Thread(
+                target=self._run_batch_parsing,
+                args=(job_id, validated_files)
+            )
+            thread.daemon = True
+            thread.start()
+            
+            logger.info(f"Started batch parsing job {job_id} with {len(validated_files)} files")
+            return job_id
     
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Get the status of a batch parsing job"""
+        """Get the status of a batch parsing job from database"""
         try:
             if not job_id:
                 logger.warning("get_job_status called with empty job_id")
                 return None
             
-            if not hasattr(self, 'active_jobs') or self.active_jobs is None:
-                logger.error("active_jobs not initialized")
+            if not self.app:
+                logger.error("Flask app not set for database operations")
                 return None
+            
+            with self.app.app_context():
+                job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                if job_record is None:
+                    logger.info(f"Job {job_id} not found in database")
+                    return None
+                else:
+                    logger.debug(f"Found job {job_id} with status: {job_record.status}")
+                    return job_record.to_dict()
                 
-            result = self.active_jobs.get(job_id)
-            if result is None:
-                logger.info(f"Job {job_id} not found in active_jobs. Available jobs: {list(self.active_jobs.keys())}")
-            else:
-                logger.debug(f"Found job {job_id} with status: {result.get('status', 'unknown')}")
-                
-            return result
         except Exception as e:
             logger.error(f"Error in get_job_status for {job_id}: {str(e)}")
             return None
     
     def list_jobs(self) -> List[Dict[str, Any]]:
-        """Get list of all jobs (active and completed)"""
-        return list(self.active_jobs.values())
+        """Get list of all jobs (active and completed) from database"""
+        try:
+            if not self.app:
+                logger.error("Flask app not set for database operations")
+                return []
+            
+            with self.app.app_context():
+                jobs = BatchJobStatus.query.order_by(BatchJobStatus.created_at.desc()).all()
+                return [job.to_dict(include_details=False) for job in jobs]
+                
+        except Exception as e:
+            logger.error(f"Error in list_jobs: {str(e)}")
+            return []
     
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a running job (if possible)"""
-        if job_id in self.active_jobs:
-            job_status = self.active_jobs[job_id]
-            if job_status['status'] in ['queued', 'processing']:
-                job_status['status'] = 'cancelled'
-                job_status['completed_at'] = datetime.utcnow().isoformat()
-                logger.info(f"Cancelled batch parsing job {job_id}")
-                return True
-        return False
+        try:
+            if not self.app:
+                logger.error("Flask app not set for database operations")
+                return False
+            
+            with self.app.app_context():
+                job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                if job_record and job_record.status in ['queued', 'processing']:
+                    job_record.update_status('cancelled')
+                    logger.info(f"Cancelled batch parsing job {job_id}")
+                    return True
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error cancelling job {job_id}: {str(e)}")
+            return False
     
-    def _run_batch_parsing(self, job_id: str, validated_files: List[Dict[str, Any]], 
-                          batch_number: str, batch_upload_datetime: str):
+    def _run_batch_parsing(self, job_id: str, validated_files: List[Dict[str, Any]]):
         """
-        Run the batch parsing job in a background thread
+        Run the batch parsing job in a background thread with database persistence
         """
         # Ensure we have app context for database operations
         if not self.app:
-            error_msg = "Flask app not set. Call set_app() before starting jobs."
-            job_status = self.active_jobs[job_id]
-            job_status['status'] = 'failed'
-            job_status['completed_at'] = datetime.utcnow().isoformat()
-            job_status['errors'].append(error_msg)
-            logger.error(f"ERROR in batch parsing job {job_id}: {error_msg}")
+            logger.error(f"ERROR in batch parsing job {job_id}: Flask app not set")
             return
         
         with self.app.app_context():
-            job_status = self.active_jobs[job_id]
-            
             try:
+                # Get job record from database
+                job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                if not job_record:
+                    logger.error(f"Job {job_id} not found in database")
+                    return
+                
                 logger.info(f"Starting batch resume parsing job: {job_id}")
-                job_status['status'] = 'processing'
-                job_status['started_at'] = datetime.utcnow().isoformat()
+                job_record.update_status('processing')
                 
                 # Process files with rate limiting
-                self._process_files_with_rate_limiting(job_id, validated_files, batch_number, batch_upload_datetime)
+                self._process_files_with_rate_limiting(job_id, validated_files)
                 
-                # Complete job
-                job_status['status'] = 'completed'
-                job_status['completed_at'] = datetime.utcnow().isoformat()
-                job_status['progress_percentage'] = 100.0
-                
-                logger.info(f"Batch parsing job {job_id} completed:")
-                logger.info(f"  Total files: {job_status['total_files']}")
-                logger.info(f"  Successful profiles: {job_status['successful_profiles']}")
-                logger.info(f"  Completed profiles: {job_status['completed_profiles']}")
-                logger.info(f"  Incomplete profiles: {job_status['incomplete_profiles']}")
-                logger.info(f"  Failed files: {job_status['failed_files']}")
-                logger.info(f"  AI summaries generated: {job_status['ai_summaries_generated']}")
-                logger.info(f"  AI summaries failed: {job_status['ai_summaries_failed']}")
-                logger.info(f"  Classifications generated: {job_status['classifications_generated']}")
-                logger.info(f"  Classifications failed: {job_status['classifications_failed']}")
+                # Complete job - get fresh instance from database
+                fresh_job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                if fresh_job_record:
+                    fresh_job_record.update_status('completed', progress_percentage=100.0)
+                    
+                    logger.info(f"Batch parsing job {job_id} completed:")
+                    logger.info(f"  Total files: {fresh_job_record.total_files}")
+                    logger.info(f"  Successful profiles: {fresh_job_record.successful_profiles}")
+                    logger.info(f"  Completed profiles: {fresh_job_record.completed_profiles}")
+                    logger.info(f"  Incomplete profiles: {fresh_job_record.incomplete_profiles}")
+                    logger.info(f"  Failed files: {fresh_job_record.failed_files}")
+                    logger.info(f"  AI summaries generated: {fresh_job_record.ai_summaries_generated}")
+                    logger.info(f"  AI summaries failed: {fresh_job_record.ai_summaries_failed}")
+                    logger.info(f"  Classifications generated: {fresh_job_record.classifications_generated}")
+                    logger.info(f"  Classifications failed: {fresh_job_record.classifications_failed}")
                 
             except Exception as e:
-                job_status['status'] = 'failed'
-                job_status['completed_at'] = datetime.utcnow().isoformat()
-                error_msg = f"Batch parsing job failed: {str(e)}"
-                job_status['errors'].append(error_msg)
-                logger.error(f"ERROR in batch parsing job {job_id}: {error_msg}")
+                try:
+                    fresh_job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                    if fresh_job_record:
+                        error_msg = f"Batch parsing job failed: {str(e)}"
+                        fresh_job_record.add_error(error_msg)
+                        fresh_job_record.update_status('failed')
+                        logger.error(f"ERROR in batch parsing job {job_id}: {error_msg}")
+                except Exception as db_error:
+                    logger.error(f"Failed to update job status in database: {str(db_error)}")
+                    logger.error(f"Original error in batch parsing job {job_id}: {str(e)}")
     
-    def _process_files_with_rate_limiting(self, job_id: str, validated_files: List[Dict[str, Any]], 
-                                        batch_number: str, batch_upload_datetime: str):
+    def _process_files_with_rate_limiting(self, job_id: str, validated_files: List[Dict[str, Any]]):
         """
-        Process resume files using ThreadPoolExecutor with rate limiting
+        Process resume files using ThreadPoolExecutor with rate limiting and database persistence
         """
-        job_status = self.active_jobs[job_id]
         start_time = time.time()
+        
+        # Get job details from database
+        with self.app.app_context():
+            job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+            if not job_record:
+                logger.error(f"Job {job_id} not found in database")
+                return
+            batch_number = job_record.batch_number
+            batch_upload_datetime = job_record.batch_upload_datetime
         
         # Create temporary files from validated file data
         temp_files = []
@@ -234,48 +253,77 @@ class BatchResumeParserService:
                 try:
                     result = future.result()
                     
-                    # Update job status
-                    job_status['processed_files'] += 1
-                    job_status['results'].append(result)
-                    
-                    if result['status'] == 'success':
-                        job_status['successful_profiles'] += 1
-                        if result['profile_status'] == 'completed':
-                            job_status['completed_profiles'] += 1
-                        else:
-                            job_status['incomplete_profiles'] += 1
+                    # Update job record in database - fetch fresh instance each time
+                    with self.app.app_context():
+                        # Get fresh job record from database
+                        fresh_job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                        if not fresh_job_record:
+                            logger.error(f"Job {job_id} not found during update")
+                            continue
                         
-                        # Track AI summary statistics
-                        if result.get('ai_summary_generated', False):
-                            job_status['ai_summaries_generated'] += 1
-                        else:
-                            job_status['ai_summaries_failed'] += 1
+                        fresh_job_record.processed_files += 1
+                        fresh_job_record.add_result(result)
                         
-                        # Track AI classification statistics
-                        if result.get('classification_generated', False):
-                            job_status['classifications_generated'] += 1
+                        if result['status'] == 'success':
+                            fresh_job_record.successful_profiles += 1
+                            if result['profile_status'] == 'completed':
+                                fresh_job_record.completed_profiles += 1
+                            else:
+                                fresh_job_record.incomplete_profiles += 1
+                            
+                            # Track AI summary statistics
+                            if result.get('ai_summary_generated', False):
+                                fresh_job_record.ai_summaries_generated += 1
+                            else:
+                                fresh_job_record.ai_summaries_failed += 1
+                            
+                            # Track AI classification statistics
+                            if result.get('classification_generated', False):
+                                fresh_job_record.classifications_generated += 1
+                            else:
+                                fresh_job_record.classifications_failed += 1
                         else:
-                            job_status['classifications_failed'] += 1
-                    else:
-                        job_status['failed_files'] += 1
-                    
-                    # Update progress
-                    progress = (job_status['processed_files'] / job_status['total_files']) * 100
-                    job_status['progress_percentage'] = round(progress, 1)
-                    
-                    logger.info(f"Processed file {file_info['original_filename']}: {result['status']}")
+                            fresh_job_record.failed_files += 1
+                            
+                            # Create failed file record for detailed tracking
+                            self._create_failed_file_record(
+                                fresh_job_record.id, file_info, result
+                            )
+                        
+                        # Update progress
+                        progress = (fresh_job_record.processed_files / fresh_job_record.total_files) * 100
+                        fresh_job_record.progress_percentage = round(progress, 1)
+                        db.session.commit()
+                        
+                        logger.info(f"Processed file {file_info['original_filename']}: {result['status']}")
                     
                 except Exception as e:
                     error_msg = f"Error processing {file_info['original_filename']}: {str(e)}"
-                    job_status['errors'].append(error_msg)
-                    job_status['failed_files'] += 1
-                    job_status['processed_files'] += 1
                     
-                    # Update progress
-                    progress = (job_status['processed_files'] / job_status['total_files']) * 100
-                    job_status['progress_percentage'] = round(progress, 1)
-                    
-                    logger.error(error_msg)
+                    with self.app.app_context():
+                        # Get fresh job record from database
+                        fresh_job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+                        if fresh_job_record:
+                            fresh_job_record.add_error(error_msg)
+                            fresh_job_record.failed_files += 1
+                            fresh_job_record.processed_files += 1
+                            
+                            # Create failed file record
+                            self._create_failed_file_record(
+                                fresh_job_record.id, file_info, {
+                                    'status': 'failed',
+                                    'errors': [str(e)],
+                                    'failure_stage': 'processing',
+                                    'error_type': 'processing_error'
+                                }
+                            )
+                            
+                            # Update progress
+                            progress = (fresh_job_record.processed_files / fresh_job_record.total_files) * 100
+                            fresh_job_record.progress_percentage = round(progress, 1)
+                            db.session.commit()
+                        
+                        logger.error(error_msg)
                 
                 # Clean up temp file
                 try:
@@ -287,8 +335,33 @@ class BatchResumeParserService:
                 time.sleep(self.rate_limit_delay)
         
         processing_time = time.time() - start_time
-        job_status['processing_time_seconds'] = round(processing_time, 2)
+        with self.app.app_context():
+            # Get fresh job record from database for final update
+            fresh_job_record = BatchJobStatus.query.filter_by(job_id=job_id).first()
+            if fresh_job_record:
+                fresh_job_record.processing_time_seconds = round(processing_time, 2)
+                db.session.commit()
+            
         logger.info(f"Batch processing completed in {processing_time:.2f} seconds")
+    
+    def _create_failed_file_record(self, batch_job_id: int, file_info: Dict[str, Any], result: Dict[str, Any]):
+        """Create a detailed failed file record for tracking"""
+        try:
+            failed_file = BatchJobFailedFile(
+                batch_job_id=batch_job_id,
+                original_filename=file_info['original_filename'],
+                file_size=file_info['file_size'],
+                failure_reason=result.get('errors', ['Unknown error'])[0] if result.get('errors') else 'Unknown error',
+                error_type=result.get('error_type', 'unknown_error'),
+                failure_stage=result.get('failure_stage', 'unknown_stage'),
+                parsing_method=result.get('parsing_method', 'unknown'),
+                attempted_at=datetime.utcnow()
+            )
+            db.session.add(failed_file)
+            db.session.commit()
+            logger.info(f"Created failed file record for {file_info['original_filename']}")
+        except Exception as e:
+            logger.error(f"Failed to create failed file record: {str(e)}")
     
     def _process_single_resume(self, job_id: str, file_info: Dict[str, Any], 
                               batch_number: str, batch_upload_datetime: str) -> Dict[str, Any]:
@@ -322,8 +395,14 @@ class BatchResumeParserService:
                 parser = get_resume_parser()
                 result['parsing_method'] = parser.parsing_method
                 
-                with open(file_info['temp_path'], 'rb') as temp_file:
-                    parsed_data = parser.parse_resume(temp_file)
+                try:
+                    with open(file_info['temp_path'], 'rb') as temp_file:
+                        parsed_data = parser.parse_resume(temp_file)
+                except Exception as parse_error:
+                    result['errors'].append(f"Resume parsing failed: {str(parse_error)}")
+                    result['error_type'] = 'parsing_error'
+                    result['failure_stage'] = 'parsing'
+                    return result
                 
                 # Check mandatory fields and fill with empty strings if missing
                 mandatory_fields = ['first_name', 'last_name', 'email']
@@ -391,51 +470,59 @@ class BatchResumeParserService:
                     # Don't fail the whole process if classification fails
                 
                 # Create candidate profile
-                candidate = CandidateMasterProfile(
-                    first_name=parsed_data.get('first_name', ''),
-                    last_name=parsed_data.get('last_name', ''),
-                    chinese_name=parsed_data.get('chinese_name'),
-                    email=parsed_data.get('email', ''),
-                    location=parsed_data.get('location'),
-                    phone_number=parsed_data.get('phone_number'),
-                    personal_summary=parsed_data.get('personal_summary'),
-                    availability_weeks=parsed_data.get('availability_weeks'),
-                    preferred_work_types=parsed_data.get('preferred_work_types'),
-                    right_to_work=parsed_data.get('right_to_work', False),
-                    salary_expectation=parsed_data.get('salary_expectation'),
-                    classification_of_interest=parsed_data.get('classification_of_interest'),
-                    sub_classification_of_interest=parsed_data.get('sub_classification_of_interest'),
-                    citizenship=parsed_data.get('citizenship'),
-                    is_active=True,
-                    remarks=f"Created via batch upload - Batch: {batch_number}",
-                    metadata_json=metadata
-                )
-                
-                db.session.add(candidate)
-                db.session.flush()  # Get the candidate ID
-                
-                # Create related records following the same pattern as create-from-parsed-data endpoint
-                self._create_related_records(candidate.id, parsed_data, metadata)
-                
-                # Store the original PDF file
                 try:
-                    with open(file_info['temp_path'], 'rb') as temp_file:
-                        pdf_content = temp_file.read()
-                    
-                    resume_record = CandidateResume(
-                        candidate_id=candidate.id,
-                        pdf_data=pdf_content,
-                        file_name=file_info['original_filename'],
-                        file_size=file_info['file_size'],
-                        content_type='application/pdf',
-                        is_active=True
+                    candidate = CandidateMasterProfile(
+                        first_name=parsed_data.get('first_name', ''),
+                        last_name=parsed_data.get('last_name', ''),
+                        chinese_name=parsed_data.get('chinese_name'),
+                        email=parsed_data.get('email', ''),
+                        location=parsed_data.get('location'),
+                        phone_number=parsed_data.get('phone_number'),
+                        personal_summary=parsed_data.get('personal_summary'),
+                        availability_weeks=parsed_data.get('availability_weeks'),
+                        preferred_work_types=parsed_data.get('preferred_work_types'),
+                        right_to_work=parsed_data.get('right_to_work', False),
+                        salary_expectation=parsed_data.get('salary_expectation'),
+                        classification_of_interest=parsed_data.get('classification_of_interest'),
+                        sub_classification_of_interest=parsed_data.get('sub_classification_of_interest'),
+                        citizenship=parsed_data.get('citizenship'),
+                        is_active=True,
+                        remarks=f"Created via batch upload - Batch: {batch_number}",
+                        metadata_json=metadata
                     )
-                    db.session.add(resume_record)
-                except Exception as resume_error:
-                    logger.warning(f"Could not store PDF data for candidate {candidate.id}: {resume_error}")
-                    # Don't fail the whole process if we can't store the PDF
-                
-                db.session.commit()
+                    
+                    db.session.add(candidate)
+                    db.session.flush()  # Get the candidate ID
+                    
+                    # Create related records following the same pattern as create-from-parsed-data endpoint
+                    self._create_related_records(candidate.id, parsed_data, metadata)
+                    
+                    # Store the original PDF file
+                    try:
+                        with open(file_info['temp_path'], 'rb') as temp_file:
+                            pdf_content = temp_file.read()
+                        
+                        resume_record = CandidateResume(
+                            candidate_id=candidate.id,
+                            pdf_data=pdf_content,
+                            file_name=file_info['original_filename'],
+                            file_size=file_info['file_size'],
+                            content_type='application/pdf',
+                            is_active=True
+                        )
+                        db.session.add(resume_record)
+                    except Exception as resume_error:
+                        logger.warning(f"Could not store PDF data for candidate {candidate.id}: {resume_error}")
+                        # Don't fail the whole process if we can't store the PDF
+                    
+                    db.session.commit()
+                    
+                except Exception as db_error:
+                    db.session.rollback()
+                    result['errors'].append(f"Database creation failed: {str(db_error)}")
+                    result['error_type'] = 'database_error'
+                    result['failure_stage'] = 'creation'
+                    return result
                 
                 # Generate AI summary and embedding
                 try:
@@ -472,6 +559,8 @@ class BatchResumeParserService:
                 except Exception as ai_error:
                     result['ai_summary_generated'] = False
                     result['ai_summary_error'] = str(ai_error)
+                    result['error_type'] = 'ai_processing_error'
+                    result['failure_stage'] = 'ai_processing'
                     logger.warning(f"AI processing failed for candidate {candidate.id}: {str(ai_error)}")
                     # Don't fail the whole process if AI processing fails
                 
@@ -484,6 +573,8 @@ class BatchResumeParserService:
                 db.session.rollback()
                 error_msg = f"Failed to process {file_info['original_filename']}: {str(e)}"
                 result['errors'].append(error_msg)
+                result['error_type'] = 'general_error'
+                result['failure_stage'] = 'general_processing'
                 logger.error(error_msg)
         
         return result

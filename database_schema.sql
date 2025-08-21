@@ -215,6 +215,61 @@ CREATE TRIGGER update_ai_recruitment_prompt_templates_last_modified_date
     BEFORE UPDATE ON ai_recruitment_prompt_templates
     FOR EACH ROW EXECUTE FUNCTION update_last_modified_date();
 
+-- Create batch job status table for tracking batch resume parsing jobs
+CREATE TABLE ai_recruitment_batch_job_status (
+    id SERIAL PRIMARY KEY,
+    job_id VARCHAR(100) UNIQUE NOT NULL,
+    batch_number VARCHAR(100) NOT NULL,
+    batch_upload_datetime VARCHAR(50), -- ISO datetime string
+    status VARCHAR(20) NOT NULL DEFAULT 'queued', -- queued, processing, completed, failed, cancelled
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    total_files INTEGER DEFAULT 0 NOT NULL,
+    processed_files INTEGER DEFAULT 0 NOT NULL,
+    successful_profiles INTEGER DEFAULT 0 NOT NULL,
+    completed_profiles INTEGER DEFAULT 0 NOT NULL, -- Complete with all mandatory fields
+    incomplete_profiles INTEGER DEFAULT 0 NOT NULL, -- Missing some mandatory fields but still created
+    failed_files INTEGER DEFAULT 0 NOT NULL,
+    ai_summaries_generated INTEGER DEFAULT 0 NOT NULL, -- Number of candidates with AI summaries
+    ai_summaries_failed INTEGER DEFAULT 0 NOT NULL, -- Number of candidates where AI processing failed
+    classifications_generated INTEGER DEFAULT 0 NOT NULL, -- Number of candidates with AI classifications
+    classifications_failed INTEGER DEFAULT 0 NOT NULL, -- Number of candidates where classification failed
+    progress_percentage REAL DEFAULT 0.0 NOT NULL,
+    processing_time_seconds REAL DEFAULT 0.0 NOT NULL,
+    errors JSONB DEFAULT '[]'::JSONB, -- List of error messages
+    results JSONB DEFAULT '[]'::JSONB, -- Detailed results for each file
+    created_by VARCHAR(100) DEFAULT 'user',
+    last_modified_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create batch job failed files table for detailed failure tracking
+CREATE TABLE ai_recruitment_batch_job_failed_files (
+    id SERIAL PRIMARY KEY,
+    batch_job_id INTEGER NOT NULL REFERENCES ai_recruitment_batch_job_status(id) ON DELETE CASCADE,
+    original_filename VARCHAR(255) NOT NULL,
+    file_size BIGINT,
+    failure_reason TEXT NOT NULL,
+    error_type VARCHAR(50), -- parsing_error, validation_error, database_error, etc.
+    failure_stage VARCHAR(50), -- parsing, validation, creation, ai_processing, etc.
+    parsing_method VARCHAR(50), -- spacy, azure_di, langextract
+    attempted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Batch job status indexes for better query performance
+CREATE INDEX idx_ai_recruitment_batch_job_status_job_id ON ai_recruitment_batch_job_status(job_id);
+CREATE INDEX idx_ai_recruitment_batch_job_status_batch_number ON ai_recruitment_batch_job_status(batch_number);
+CREATE INDEX idx_ai_recruitment_batch_job_status_status ON ai_recruitment_batch_job_status(status);
+CREATE INDEX idx_ai_recruitment_batch_job_status_created_at ON ai_recruitment_batch_job_status(created_at);
+CREATE INDEX idx_ai_recruitment_batch_job_failed_files_batch_job_id ON ai_recruitment_batch_job_failed_files(batch_job_id);
+CREATE INDEX idx_ai_recruitment_batch_job_failed_files_filename ON ai_recruitment_batch_job_failed_files(original_filename);
+
+-- Add trigger for batch job status table
+CREATE TRIGGER update_ai_recruitment_batch_job_status_last_modified_date
+    BEFORE UPDATE ON ai_recruitment_batch_job_status
+    FOR EACH ROW EXECUTE FUNCTION update_last_modified_date();
+
 -- Insert default AI recruitment prompt template
 INSERT INTO ai_recruitment_prompt_templates (name, description, template_content, is_active, version_number, created_by) 
 VALUES (

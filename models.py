@@ -330,4 +330,147 @@ class AiPromptTemplate(db.Model):
         
         # Get the highest version number and add 1
         max_version = db.session.query(db.func.max(AiPromptTemplate.version_number)).scalar()
-        return (max_version or 0) + 1 
+        return (max_version or 0) + 1
+
+class BatchJobStatus(db.Model):
+    __tablename__ = 'ai_recruitment_batch_job_status'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    job_id = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    batch_number = db.Column(db.String(100), nullable=False, index=True)
+    batch_upload_datetime = db.Column(db.String(50))  # ISO datetime string
+    status = db.Column(db.String(20), nullable=False, default='queued', index=True)  # queued, processing, completed, failed, cancelled
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    total_files = db.Column(db.Integer, default=0, nullable=False)
+    processed_files = db.Column(db.Integer, default=0, nullable=False)
+    successful_profiles = db.Column(db.Integer, default=0, nullable=False)
+    completed_profiles = db.Column(db.Integer, default=0, nullable=False)  # Complete with all mandatory fields
+    incomplete_profiles = db.Column(db.Integer, default=0, nullable=False)  # Missing some mandatory fields but still created
+    failed_files = db.Column(db.Integer, default=0, nullable=False)
+    ai_summaries_generated = db.Column(db.Integer, default=0, nullable=False)  # Number of candidates with AI summaries
+    ai_summaries_failed = db.Column(db.Integer, default=0, nullable=False)  # Number of candidates where AI processing failed
+    classifications_generated = db.Column(db.Integer, default=0, nullable=False)  # Number of candidates with AI classifications
+    classifications_failed = db.Column(db.Integer, default=0, nullable=False)  # Number of candidates where classification failed
+    progress_percentage = db.Column(db.Float, default=0.0, nullable=False)
+    processing_time_seconds = db.Column(db.Float, default=0.0, nullable=False)
+    errors = db.Column(JSONB, default=list)  # List of error messages
+    results = db.Column(JSONB, default=list)  # Detailed results for each file
+    created_by = db.Column(db.String(100), default='user')
+    last_modified_date = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationship to track failed files
+    failed_files_details = db.relationship('BatchJobFailedFile', backref='batch_job', lazy=True, cascade='all, delete-orphan')
+    
+    def to_dict(self, include_details=True):
+        """Convert job status to dictionary"""
+        data = {
+            'id': self.id,
+            'job_id': self.job_id,
+            'batch_number': self.batch_number,
+            'batch_upload_datetime': self.batch_upload_datetime,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'total_files': self.total_files,
+            'processed_files': self.processed_files,
+            'successful_profiles': self.successful_profiles,
+            'completed_profiles': self.completed_profiles,
+            'incomplete_profiles': self.incomplete_profiles,
+            'failed_files': self.failed_files,
+            'ai_summaries_generated': self.ai_summaries_generated,
+            'ai_summaries_failed': self.ai_summaries_failed,
+            'classifications_generated': self.classifications_generated,
+            'classifications_failed': self.classifications_failed,
+            'progress_percentage': self.progress_percentage,
+            'processing_time_seconds': self.processing_time_seconds,
+            'created_by': self.created_by,
+            'last_modified_date': self.last_modified_date.isoformat() if self.last_modified_date else None
+        }
+        
+        if include_details:
+            data['errors'] = self.errors or []
+            data['results'] = self.results or []
+            # Include failed file details
+            data['failed_files_details'] = [failed_file.to_dict() for failed_file in self.failed_files_details]
+        
+        return data
+    
+    @classmethod
+    def create_new_job(cls, job_id: str, batch_number: str, total_files: int, created_by: str = 'user'):
+        """Create a new batch job status record"""
+        job = cls(
+            job_id=job_id,
+            batch_number=batch_number,
+            batch_upload_datetime=datetime.utcnow().isoformat(),
+            total_files=total_files,
+            created_by=created_by,
+            status='queued'
+        )
+        db.session.add(job)
+        db.session.commit()
+        return job
+    
+    def update_status(self, status: str, **kwargs):
+        """Update job status and related fields"""
+        self.status = status
+        self.last_modified_date = datetime.utcnow()
+        
+        # Update timestamp fields based on status
+        if status == 'processing' and not self.started_at:
+            self.started_at = datetime.utcnow()
+        elif status in ['completed', 'failed', 'cancelled'] and not self.completed_at:
+            self.completed_at = datetime.utcnow()
+        
+        # Update other fields if provided
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+        
+        db.session.commit()
+    
+    def add_error(self, error_message: str):
+        """Add an error message to the job"""
+        if not self.errors:
+            self.errors = []
+        self.errors.append(error_message)
+        self.last_modified_date = datetime.utcnow()
+        db.session.commit()
+    
+    def add_result(self, result: dict):
+        """Add a processing result to the job"""
+        if not self.results:
+            self.results = []
+        self.results.append(result)
+        self.last_modified_date = datetime.utcnow()
+        db.session.commit()
+
+class BatchJobFailedFile(db.Model):
+    __tablename__ = 'ai_recruitment_batch_job_failed_files'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    batch_job_id = db.Column(db.Integer, db.ForeignKey('ai_recruitment_batch_job_status.id'), nullable=False)
+    original_filename = db.Column(db.String(255), nullable=False)
+    file_size = db.Column(db.BigInteger)
+    failure_reason = db.Column(db.Text, nullable=False)
+    error_type = db.Column(db.String(50))  # parsing_error, validation_error, database_error, etc.
+    failure_stage = db.Column(db.String(50))  # parsing, validation, creation, ai_processing, etc.
+    parsing_method = db.Column(db.String(50))  # spacy, azure_di, langextract
+    attempted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_date = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'batch_job_id': self.batch_job_id,
+            'original_filename': self.original_filename,
+            'file_size': self.file_size,
+            'failure_reason': self.failure_reason,
+            'error_type': self.error_type,
+            'failure_stage': self.failure_stage,
+            'parsing_method': self.parsing_method,
+            'attempted_at': self.attempted_at.isoformat() if self.attempted_at else None,
+            'created_date': self.created_date.isoformat() if self.created_date else None
+        } 
