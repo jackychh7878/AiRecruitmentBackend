@@ -297,6 +297,8 @@ batch_job_status_model = candidate_profile_ns.model('BatchJobStatus', {
     'failed_files': fields.Integer(description='Number of files that failed to process'),
     'ai_summaries_generated': fields.Integer(description='Number of candidates with AI summaries generated'),
     'ai_summaries_failed': fields.Integer(description='Number of candidates where AI processing failed'),
+    'classifications_generated': fields.Integer(description='Number of candidates with AI classifications generated'),
+    'classifications_failed': fields.Integer(description='Number of candidates where AI classification failed'),
     'progress_percentage': fields.Float(description='Progress percentage (0-100)'),
     'processing_time_seconds': fields.Float(description='Total processing time in seconds'),
     'errors': fields.List(fields.String, description='List of error messages'),
@@ -2396,6 +2398,8 @@ class BatchResumeParser(Resource):
         **FEATURES**:
         - PDF parsing and data extraction
         - Complete candidate profile creation (skills, education, experience, etc.)
+        - AI-powered industry classification (using lookup data)
+        - AI-powered role tag assignment (supports multiple roles)
         - AI summary generation using Azure OpenAI
         - Embedding generation for semantic search
         - Progress tracking and detailed reporting
@@ -2413,10 +2417,11 @@ class BatchResumeParser(Resource):
         
         **PROCESSING PIPELINE**:
         1. Parse resume content using configured method (spacy/azure_di/langextract)
-        2. Create candidate profile with all related records
-        3. Generate AI summary using Azure OpenAI
-        4. Generate embedding vector for semantic search
-        5. Store complete profile in database
+        2. AI classification - determine industry and role tags from lookup data
+        3. Create candidate profile with all related records and classifications
+        4. Generate AI summary using Azure OpenAI
+        5. Generate embedding vector for semantic search
+        6. Store complete profile in database
         
         **THREADING CONFIGURATION**:
         - AI_BULK_MAX_CONCURRENT_WORKERS: Maximum concurrent workers (default: 5)
@@ -2704,4 +2709,27 @@ class BatchParseConfig(Resource):
             }, 200
             
         except Exception as e:
-            candidate_profile_ns.abort(500, f'Failed to get configuration: {str(e)}') 
+            candidate_profile_ns.abort(500, f'Failed to get configuration: {str(e)}')
+
+@candidate_profile_ns.route('/batch-parse-resumes/classification-stats')
+class ClassificationStats(Resource):
+    @candidate_profile_ns.doc('get_classification_stats')
+    def get(self):
+        """
+        Get statistics about available classification options
+        
+        Shows the available industry classifications and role tags that the AI
+        can assign to candidates during batch processing.
+        """
+        try:
+            from services.candidate_classification_service import candidate_classification_service
+            
+            stats = candidate_classification_service.get_classification_statistics()
+            
+            return {
+                'classification_statistics': stats,
+                'message': 'AI classification uses these lookup codes for automatic candidate classification'
+            }, 200
+            
+        except Exception as e:
+            candidate_profile_ns.abort(500, f'Failed to get classification statistics: {str(e)}') 

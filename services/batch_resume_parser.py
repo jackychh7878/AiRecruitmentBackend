@@ -14,6 +14,7 @@ from models import (
 )
 from services.resume_parser import get_resume_parser
 from services.ai_summary_service import ai_summary_service
+from services.candidate_classification_service import candidate_classification_service
 import json
 import asyncio
 from flask import current_app
@@ -88,6 +89,8 @@ class BatchResumeParserService:
             'failed_files': 0,
             'ai_summaries_generated': 0,  # Number of candidates with AI summaries
             'ai_summaries_failed': 0,    # Number of candidates where AI processing failed
+            'classifications_generated': 0,  # Number of candidates with AI classifications
+            'classifications_failed': 0,    # Number of candidates where classification failed
             'progress_percentage': 0.0,
             'processing_time_seconds': 0.0,
             'errors': [],
@@ -165,6 +168,8 @@ class BatchResumeParserService:
                 logger.info(f"  Failed files: {job_status['failed_files']}")
                 logger.info(f"  AI summaries generated: {job_status['ai_summaries_generated']}")
                 logger.info(f"  AI summaries failed: {job_status['ai_summaries_failed']}")
+                logger.info(f"  Classifications generated: {job_status['classifications_generated']}")
+                logger.info(f"  Classifications failed: {job_status['classifications_failed']}")
                 
             except Exception as e:
                 job_status['status'] = 'failed'
@@ -227,6 +232,12 @@ class BatchResumeParserService:
                             job_status['ai_summaries_generated'] += 1
                         else:
                             job_status['ai_summaries_failed'] += 1
+                        
+                        # Track AI classification statistics
+                        if result.get('classification_generated', False):
+                            job_status['classifications_generated'] += 1
+                        else:
+                            job_status['classifications_failed'] += 1
                     else:
                         job_status['failed_files'] += 1
                     
@@ -324,6 +335,42 @@ class BatchResumeParserService:
                 
                 # Add metadata to parsed data
                 parsed_data['metadata_json'] = metadata
+                
+                # Perform AI classification for industry and role tags
+                try:
+                    logger.info(f"Starting AI classification for candidate")
+                    
+                    # Run AI classification in async context
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        classification_result = loop.run_until_complete(
+                            candidate_classification_service.classify_candidate(parsed_data)
+                        )
+                    finally:
+                        loop.close()
+                        asyncio.set_event_loop(None)
+                    
+                    if classification_result.get('classification_success'):
+                        # Update parsed data with AI classification
+                        if classification_result.get('classification_of_interest'):
+                            parsed_data['classification_of_interest'] = classification_result['classification_of_interest']
+                        if classification_result.get('sub_classification_of_interest'):
+                            parsed_data['sub_classification_of_interest'] = classification_result['sub_classification_of_interest']
+                        
+                        result['classification_generated'] = True
+                        result['classification_reasoning'] = classification_result.get('reasoning', '')
+                        logger.info(f"AI classification successful: {classification_result['classification_of_interest']} | {classification_result['sub_classification_of_interest']}")
+                    else:
+                        result['classification_generated'] = False
+                        result['classification_error'] = classification_result.get('error', 'Unknown error')
+                        logger.warning(f"AI classification failed: {classification_result.get('error')}")
+                        
+                except Exception as classification_error:
+                    result['classification_generated'] = False
+                    result['classification_error'] = str(classification_error)
+                    logger.warning(f"AI classification failed: {str(classification_error)}")
+                    # Don't fail the whole process if classification fails
                 
                 # Create candidate profile
                 candidate = CandidateMasterProfile(
